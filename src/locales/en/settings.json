@@ -193,7 +193,12 @@
     "apiKeyOptional": "(optional)",
     "chatModelPlaceholder": "Model id as your server lists it",
     "chatModelRequired": "Enter the model id your server uses before saving.",
-    "privacyNotice": "Email content is sent to this server for chat and drafts. It is used for chat only: semantic search uses keywords."
+    "privacyNotice": "Email content is sent to this server for chat and drafts.",
+    "embeddingHelp": "Semantic search indexes your emails: with the in-app model (on this computer, nothing is sent), with OpenRouter, or not at all (keyword search).",
+    "embeddingLocalOption": "{{name}} — in-app, on this computer",
+    "embeddingOpenRouterOption": "OpenRouter: {{name}}",
+    "embeddingLocalUnavailable": "This build cannot run the in-app model. Choose an OpenRouter model or none.",
+    "embeddingNeedsOpenRouterKey": "OpenRouter embeddings use your OpenRouter key: save one on the OpenRouter tab first."
   },
   "confirmReindex": {
     "title": "Regenerate all Embeddings?",

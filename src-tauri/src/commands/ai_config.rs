@@ -206,8 +206,8 @@ pub async fn list_ai_embedding_models(
     provider: Option<String>,
 ) -> Result<Vec<serde_json::Value>, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
-    // An OpenAI-compatible server is used for chat only (no embeddings), so
-    // there is nothing to list here.
+    // An OpenAI-compatible server embeds nothing itself: its settings list
+    // OpenRouter's models (asked for as "openrouter") and the in-app catalogue.
     if provider.as_deref().unwrap_or(&config.provider) == services::ai::OPENAI_COMPATIBLE {
         return Ok(Vec::new());
     }

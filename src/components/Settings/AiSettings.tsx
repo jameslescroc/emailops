@@ -166,7 +166,8 @@ export function AiSettings() {
 
   // OpenRouter's embedding models, once the OpenRouter tab is open and a key
   // is saved to ask with. A failed listing leaves the saved model selectable.
-  const openRouterListable = config?.provider === 'openrouter' && config.hasApiKey;
+  // Server mode can embed with OpenRouter too, so its list is offered there as well.
+  const openRouterListable = config != null && isRemoteOpenAiProvider(config.provider) && config.hasApiKey;
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload only when the tab or the saved key changes
   useEffect(() => {
     if (!openRouterListable) return;
@@ -491,7 +492,10 @@ export function AiSettings() {
       // saved: nothing is written when the check fails.
       if (needsEmbeddingProbe(config, validatedEmbedModelRef.current)) {
         try {
-          await api.validateOpenRouterEmbeddingModel(config.embeddingModel, key, config.zeroDataRetention);
+          // In server mode the typed key is the server's, never sent to
+          // OpenRouter: the backend uses the saved OpenRouter key instead.
+          const openRouterKey = config.provider === 'openrouter' ? key : null;
+          await api.validateOpenRouterEmbeddingModel(config.embeddingModel, openRouterKey, config.zeroDataRetention);
         } catch (err) {
           setError(
             config.zeroDataRetention && isDataPolicyError(err)
@@ -775,6 +779,8 @@ export function AiSettings() {
                 contextBudget={contextBudget}
                 onContextBudgetChange={setContextBudget}
                 embeddingModels={openRouterEmbedModels}
+                localEmbeddingModels={catalog.filter((m) => m.kind === 'embedding')}
+                localEmbeddingAvailable={embeddedAvailable !== false}
                 embeddingNeedsCheck={needsEmbeddingProbe(config, validatedEmbedModelRef.current)}
               />
             )}

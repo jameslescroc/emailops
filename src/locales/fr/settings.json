@@ -193,7 +193,12 @@
     "apiKeyOptional": "(facultatif)",
     "chatModelPlaceholder": "Identifiant du modèle tel que votre serveur le liste",
     "chatModelRequired": "Saisissez l'identifiant du modèle utilisé par votre serveur avant d'enregistrer.",
-    "privacyNotice": "Le contenu des e-mails est envoyé à ce serveur pour le chat et les brouillons. Il sert uniquement au chat : la recherche sémantique utilise les mots-clés."
+    "privacyNotice": "Le contenu des e-mails est envoyé à ce serveur pour le chat et les brouillons.",
+    "embeddingHelp": "La recherche sémantique indexe vos e-mails : avec le modèle intégré (sur cet ordinateur, rien n'est envoyé), avec OpenRouter, ou pas du tout (recherche par mots-clés).",
+    "embeddingLocalOption": "{{name}} — intégré, sur cet ordinateur",
+    "embeddingOpenRouterOption": "OpenRouter : {{name}}",
+    "embeddingLocalUnavailable": "Cette version ne peut pas exécuter le modèle intégré. Choisissez un modèle OpenRouter ou aucun.",
+    "embeddingNeedsOpenRouterKey": "Les embeddings OpenRouter utilisent votre clé OpenRouter : enregistrez-en une dans l'onglet OpenRouter d'abord."
   },
   "confirmReindex": {
     "title": "Régénérer tous les Embeddings ?",

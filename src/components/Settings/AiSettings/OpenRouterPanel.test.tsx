@@ -6,6 +6,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CatalogModel } from '@/types';
 import { OpenRouterPanel } from './OpenRouterPanel';
 import type { AiConfigState } from './types';
 
@@ -62,6 +63,16 @@ describe('OpenRouterPanel', () => {
     { id: 'vendor/embed-large', name: 'Vendor Embed Large', pricing: { prompt: 0, completion: 0, request: 0 } },
   ];
   let embeddingNeedsCheck = false;
+  let localEmbeddingAvailable = true;
+  const localEmbeddingModels = [
+    {
+      id: 'nomic-embed-text-v1.5-q4_k_m',
+      displayName: 'Nomic Embed v1.5',
+      kind: 'embedding',
+      sizeBytes: 1,
+      isLocal: true,
+    } as unknown as CatalogModel,
+  ];
 
   function embeddingSelect(): HTMLSelectElement {
     const select = container.querySelector<HTMLSelectElement>('select[aria-label="settings:ai.embeddingModel"]');
@@ -81,6 +92,8 @@ describe('OpenRouterPanel', () => {
           onContextBudgetChange={onContextBudgetChange}
           embeddingModels={embeddingModels}
           embeddingNeedsCheck={embeddingNeedsCheck}
+          localEmbeddingModels={localEmbeddingModels}
+          localEmbeddingAvailable={localEmbeddingAvailable}
         />,
       );
     });
@@ -213,12 +226,48 @@ describe('OpenRouterPanel', () => {
 
     it('hides what only OpenRouter has, keeps the context budget, and states where mail goes', () => {
       render(serverConfig);
-      expect(container.querySelector('select[aria-label="settings:ai.embeddingModel"]')).toBeNull();
       expect(container.querySelector('button[aria-label="settings:openRouter.zeroDataRetention"]')).toBeNull();
       expect(container.textContent).not.toContain('settings:ai.monthlyBudget');
       expect(container.textContent).not.toContain('settings:openRouter.noTrainingNotice');
       expect(budgetInput()).not.toBeNull();
       expect(container.textContent).toContain('settings:openAiCompatible.privacyNotice');
+    });
+
+    it('offers none, the in-app model and OpenRouter models for the email index', () => {
+      render(serverConfig);
+      const values = Array.from(embeddingSelect().options).map((o) => o.value);
+      expect(values[0]).toBe('');
+      expect(values).toContain('nomic-embed-text-v1.5-q4_k_m');
+      expect(values).toContain('vendor/embed-large');
+      // The in-app model is listed before OpenRouter's.
+      expect(values.indexOf('nomic-embed-text-v1.5-q4_k_m')).toBeLessThan(values.indexOf('vendor/embed-large'));
+      expect(container.textContent).toContain('settings:openAiCompatible.embeddingHelp');
+    });
+
+    it('picks the in-app model', () => {
+      const setConfig = render(serverConfig);
+      act(() => {
+        embeddingSelect().value = 'nomic-embed-text-v1.5-q4_k_m';
+        embeddingSelect().dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      expect(setConfig).toHaveBeenCalledWith({ ...serverConfig, embeddingModel: 'nomic-embed-text-v1.5-q4_k_m' });
+    });
+
+    it('warns that OpenRouter embeddings send mail there and need the OpenRouter key', () => {
+      render({ ...serverConfig, embeddingModel: 'vendor/embed-large', hasApiKey: false });
+      expect(container.textContent).toContain('settings:openRouter.embeddingNotice');
+      expect(container.textContent).toContain('settings:openAiCompatible.embeddingNeedsOpenRouterKey');
+      // The in-app model sends nothing, so no such notice.
+      render({ ...serverConfig, embeddingModel: 'nomic-embed-text-v1.5-q4_k_m', hasApiKey: false });
+      expect(container.textContent).not.toContain('settings:openRouter.embeddingNotice');
+      expect(container.textContent).not.toContain('settings:openAiCompatible.embeddingNeedsOpenRouterKey');
+    });
+
+    it('says when this build cannot run the in-app model', () => {
+      localEmbeddingAvailable = false;
+      render({ ...serverConfig, embeddingModel: 'nomic-embed-text-v1.5-q4_k_m' });
+      expect(container.textContent).toContain('settings:openAiCompatible.embeddingLocalUnavailable');
+      localEmbeddingAvailable = true;
     });
 
     it('has no URL field in OpenRouter mode', () => {

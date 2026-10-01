@@ -46,7 +46,9 @@ export function embeddingModelForProvider(
 ): string {
   if (remembered !== null) return remembered;
   if (next === 'ollama') return available.ollamaEmbedModels[0] ?? '';
-  if (next === 'llamacpp') {
+  // The OpenAI-compatible server is chat only: index with the in-app model by
+  // default, so nothing leaves the machine.
+  if (next === 'llamacpp' || next === 'openai_compatible') {
     const models = available.catalog.filter((m) => m.kind === 'embedding');
     return (models.find((m) => m.isLocal) ?? models.find((m) => m.recommended))?.id ?? '';
   }
@@ -94,5 +96,9 @@ export function embeddingModelChanged(saved: string, next: string): boolean {
  * model: any model other than `validatedModel`, the one that already passed.
  */
 export function needsEmbeddingProbe(config: AiConfigState, validatedModel: string | null): boolean {
-  return config.provider === 'openrouter' && config.embeddingModel !== '' && config.embeddingModel !== validatedModel;
+  if (config.embeddingModel === '' || config.embeddingModel === validatedModel) return false;
+  if (config.provider === 'openrouter') return true;
+  // Server mode embeds with OpenRouter only for a `vendor/model` id; the
+  // in-app model runs locally and has nothing to check.
+  return config.provider === 'openai_compatible' && config.embeddingModel.includes('/');
 }

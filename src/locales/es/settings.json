@@ -193,7 +193,12 @@
     "apiKeyOptional": "(opcional)",
     "chatModelPlaceholder": "Id del modelo tal como lo lista tu servidor",
     "chatModelRequired": "Introduce el id del modelo que usa tu servidor antes de guardar.",
-    "privacyNotice": "El contenido de los correos se envía a este servidor para el chat y los borradores. Solo se usa para el chat: la búsqueda semántica usa palabras clave."
+    "privacyNotice": "El contenido de los correos se envía a este servidor para el chat y los borradores.",
+    "embeddingHelp": "La búsqueda semántica indexa tus correos: con el modelo integrado (en este equipo, no se envía nada), con OpenRouter, o sin índice (búsqueda por palabras clave).",
+    "embeddingLocalOption": "{{name}} — integrado, en este equipo",
+    "embeddingOpenRouterOption": "OpenRouter: {{name}}",
+    "embeddingLocalUnavailable": "Esta versión no puede ejecutar el modelo integrado. Elige un modelo de OpenRouter o ninguno.",
+    "embeddingNeedsOpenRouterKey": "Los embeddings de OpenRouter usan tu clave de OpenRouter: guarda una antes en la pestaña OpenRouter."
   },
   "confirmReindex": {
     "title": "¿Regenerar todos los Embeddings?",

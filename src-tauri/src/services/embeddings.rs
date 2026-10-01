@@ -126,9 +126,15 @@ fn embedding_skip_reason(provider: &str, configured: bool) -> (&'static str, Str
             "warn",
             "Skipped: OpenRouter is not reachable — check the connection and the API key in Settings → AI".to_string(),
         ),
-        ("openai_compatible", _) => (
+        ("openai_compatible", false) => (
             "info",
-            "Skipped: the OpenAI-compatible provider is used for chat only, so search uses keywords".to_string(),
+            "Skipped: no embedding model is chosen for the OpenAI-compatible provider, so search uses keywords — pick the in-app model or an OpenRouter one in Settings → AI"
+                .to_string(),
+        ),
+        ("openai_compatible", true) => (
+            "warn",
+            "Skipped: the embedding model chosen for the OpenAI-compatible provider is not available — check it in Settings → AI"
+                .to_string(),
         ),
         ("ollama", _) => (
             "warn",
@@ -767,7 +773,8 @@ mod tests {
             ("openrouter", true, "warn", "OpenRouter is not reachable"),
             ("ollama", true, "warn", "check that Ollama is running"),
             ("llamacpp", true, "warn", "in-app embedding model"),
-            ("openai_compatible", false, "info", "chat only"),
+            ("openai_compatible", false, "info", "search uses keywords"),
+            ("openai_compatible", true, "warn", "embedding model chosen"),
             ("other", true, "warn", "'other' is not reachable"),
         ];
         for (provider, configured, level, fragment) in cases {

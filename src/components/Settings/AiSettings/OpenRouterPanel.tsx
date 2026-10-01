@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
-import type { AiModelInfo } from '@/types';
+import type { AiModelInfo, CatalogModel } from '@/types';
 import { MIN_CONTEXT_BUDGET } from './helpers';
 import { recommendedEmbeddingOptions } from './openRouterEmbeddingOptions';
 import { ThinkingToggle } from './ThinkingToggle';
@@ -19,6 +19,10 @@ interface OpenRouterPanelProps {
   embeddingModels: AiModelInfo[];
   /** The selected embedding model will be checked by the backend on Save. */
   embeddingNeedsCheck: boolean;
+  /** In-app embedding models (server mode can index with them locally). */
+  localEmbeddingModels?: CatalogModel[];
+  /** False when this build or machine cannot run the in-app runtime. */
+  localEmbeddingAvailable?: boolean;
 }
 
 /** Inputs shared by both modes. */
@@ -29,9 +33,11 @@ const INPUT_CLASS =
  * Panel for the two providers that speak the OpenAI Chat Completions API:
  * OpenRouter, and a user-configured OpenAI-compatible server (LM Studio,
  * vLLM, llama-server, LiteLLM, a local proxy…). The server mode adds a base
- * URL, makes the key optional, and drops what only OpenRouter has: its
- * embedding models, budget/usage (costs are not reported), data policy and
- * zero data retention. It is chat only — search uses keywords.
+ * URL, makes the key optional, and drops what only OpenRouter has: budget /
+ * usage (costs are not reported), data policy and zero data retention. The
+ * server is used for chat; the email index comes from the in-app model
+ * (default, nothing leaves the machine), from OpenRouter (uses the OpenRouter
+ * key, checked like on its own tab), or from nothing (keyword search).
  *
  * OpenRouter mode: API key, free-form chat model id, an optional embedding
  * model and a monthly USD budget cap.
@@ -55,6 +61,8 @@ export function OpenRouterPanel({
   onContextBudgetChange,
   embeddingModels,
   embeddingNeedsCheck,
+  localEmbeddingModels = [],
+  localEmbeddingAvailable = true,
 }: OpenRouterPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
   const custom = config.provider === 'openai_compatible';
@@ -65,14 +73,27 @@ export function OpenRouterPanel({
     .filter((m) => !recommended.some((r) => r.value === m.id))
     .map((m) => ({ value: m.id, label: m.id }));
   const known = [...recommended, ...listed];
+  const local = custom
+    ? localEmbeddingModels.map((m) => ({
+        value: m.id,
+        label: t('settings:openAiCompatible.embeddingLocalOption', { name: m.displayName }),
+      }))
+    : [];
+  const openRouterOptions = custom
+    ? known.map((o) => ({ ...o, label: t('settings:openAiCompatible.embeddingOpenRouterOption', { name: o.label }) }))
+    : known;
+  const offered = [...local, ...openRouterOptions];
   const embeddingOptions = [
     none,
     // A saved model the list no longer has (or could not load) stays selectable.
-    ...(config.embeddingModel !== '' && !known.some((o) => o.value === config.embeddingModel)
+    ...(config.embeddingModel !== '' && !offered.some((o) => o.value === config.embeddingModel)
       ? [{ value: config.embeddingModel, label: config.embeddingModel }]
       : []),
-    ...known,
+    ...offered,
   ];
+  // Where the server-mode index is built, for the notice under the selector.
+  const embedsWithOpenRouter = custom && config.embeddingModel.includes('/');
+  const embedsLocally = custom && config.embeddingModel !== '' && !embedsWithOpenRouter;
   return (
     <div className="space-y-4">
       {custom && (
@@ -121,25 +142,36 @@ export function OpenRouterPanel({
           className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
         />
       </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
+        <Select
+          value={config.embeddingModel}
+          options={embeddingOptions}
+          onChange={(value) => setConfig({ ...config, embeddingModel: value })}
+          ariaLabel={t('settings:ai.embeddingModel')}
+          fullWidth
+        />
+        {!custom && <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>}
+        {custom && <p className="text-xs text-gray-500 mt-1">{t('settings:openAiCompatible.embeddingHelp')}</p>}
+        {embedsLocally && !localEmbeddingAvailable && (
+          <p className="text-xs text-amber-400 mt-1">{t('settings:openAiCompatible.embeddingLocalUnavailable')}</p>
+        )}
+        {embedsWithOpenRouter && (
+          <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>
+        )}
+        {(!custom || embedsWithOpenRouter) && !config.hasApiKey && (
+          <p className="text-xs text-gray-500 mt-1">
+            {custom
+              ? t('settings:openAiCompatible.embeddingNeedsOpenRouterKey')
+              : t('settings:openRouter.embeddingNeedsKey')}
+          </p>
+        )}
+        {embeddingNeedsCheck && (
+          <p className="text-xs text-amber-400 mt-1">{t('settings:openRouter.embeddingNeedsCheck')}</p>
+        )}
+      </div>
       {!custom && (
         <>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
-            <Select
-              value={config.embeddingModel}
-              options={embeddingOptions}
-              onChange={(value) => setConfig({ ...config, embeddingModel: value })}
-              ariaLabel={t('settings:ai.embeddingModel')}
-              fullWidth
-            />
-            <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>
-            {!config.hasApiKey && (
-              <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNeedsKey')}</p>
-            )}
-            {embeddingNeedsCheck && (
-              <p className="text-xs text-amber-400 mt-1">{t('settings:openRouter.embeddingNeedsCheck')}</p>
-            )}
-          </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.monthlyBudget')}</label>
             <input

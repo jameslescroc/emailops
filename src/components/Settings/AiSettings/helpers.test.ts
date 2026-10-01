@@ -111,6 +111,16 @@ describe('chatModelForProvider', () => {
     expect(chatModelForProvider('ollama', null, nothingLocal)).toBe('');
   });
 
+  it('indexes with the in-app model by default for an OpenAI-compatible server', () => {
+    const catalog = [catalogModel('embed-local-gguf', { isLocal: true })];
+    expect(embeddingModelForProvider('openai_compatible', null, { catalog, ollamaEmbedModels: [] })).toBe(
+      'embed-local-gguf',
+    );
+    expect(embeddingModelForProvider('openai_compatible', 'vendor/embed', { catalog, ollamaEmbedModels: [] })).toBe(
+      'vendor/embed',
+    );
+  });
+
   it('suggests no model for an OpenAI-compatible server (its ids are its own)', () => {
     expect(chatModelForProvider('openai_compatible', null, lists)).toBe('');
     expect(chatModelForProvider('openai_compatible', 'claude-haiku', lists)).toBe('claude-haiku');
@@ -146,5 +156,25 @@ describe('needsEmbeddingProbe', () => {
     expect(needsEmbeddingProbe({ ...base, embeddingModel: '' }, null)).toBe(false);
     expect(needsEmbeddingProbe({ ...base, provider: 'ollama' }, null)).toBe(false);
     expect(needsEmbeddingProbe({ ...base, provider: 'llamacpp' }, null)).toBe(false);
+  });
+});
+
+describe('needsEmbeddingProbe in OpenAI-compatible mode', () => {
+  const server = {
+    provider: 'openai_compatible',
+    model: 'claude-haiku',
+    embeddingModel: '',
+    monthlyBudgetUsd: 0,
+    hasApiKey: true,
+    thinkingEnabled: false,
+    zeroDataRetention: false,
+    baseUrl: 'http://127.0.0.1:8317/v1',
+    hasBaseUrlApiKey: true,
+  } as const;
+  it('checks an OpenRouter embedding model, never the in-app one', () => {
+    expect(needsEmbeddingProbe({ ...server, embeddingModel: 'vendor/embed' }, null)).toBe(true);
+    expect(needsEmbeddingProbe({ ...server, embeddingModel: 'vendor/embed' }, 'vendor/embed')).toBe(false);
+    expect(needsEmbeddingProbe({ ...server, embeddingModel: 'nomic-embed-text-v1.5-q4_k_m' }, null)).toBe(false);
+    expect(needsEmbeddingProbe(server, null)).toBe(false);
   });
 });

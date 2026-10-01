@@ -193,7 +193,12 @@
     "apiKeyOptional": "(optional)",
     "chatModelPlaceholder": "Modell-ID, wie Ihr Server sie auflistet",
     "chatModelRequired": "Geben Sie vor dem Speichern die Modell-ID Ihres Servers ein.",
-    "privacyNotice": "E-Mail-Inhalte werden für Chat und Entwürfe an diesen Server gesendet. Er dient nur dem Chat: Die semantische Suche nutzt Stichwörter."
+    "privacyNotice": "E-Mail-Inhalte werden für Chat und Entwürfe an diesen Server gesendet.",
+    "embeddingHelp": "Die semantische Suche indexiert Ihre E-Mails: mit dem integrierten Modell (auf diesem Rechner, nichts wird gesendet), mit OpenRouter oder gar nicht (Stichwortsuche).",
+    "embeddingLocalOption": "{{name}} — integriert, auf diesem Rechner",
+    "embeddingOpenRouterOption": "OpenRouter: {{name}}",
+    "embeddingLocalUnavailable": "Diese Version kann das integrierte Modell nicht ausführen. Wählen Sie ein OpenRouter-Modell oder keines.",
+    "embeddingNeedsOpenRouterKey": "OpenRouter-Embeddings nutzen Ihren OpenRouter-Schlüssel: Speichern Sie zuerst einen im Tab OpenRouter."
   },
   "confirmReindex": {
     "title": "Alle Embeddings neu erzeugen?",

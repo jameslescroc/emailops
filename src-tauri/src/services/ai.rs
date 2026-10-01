@@ -7,7 +7,8 @@ const DEFAULT_KEEP_ALIVE_SECS: u32 = 30 * 60;
 use crate::ai::ollama::OllamaClient;
 use crate::ai::openrouter::{validated_embedding, EmbeddingDimensions, OpenRouterClient};
 use crate::ai::provider::{
-    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, ToolStreamResult,
+    AIProvider, AiMessage, ChatStreamResult, CompletionOptions, CompletionResult, ModelInfo, SplitProvider,
+    ToolStreamResult,
 };
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
@@ -88,10 +89,10 @@ fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<
     use crate::ai::model_catalog;
     match provider {
         "openrouter" => model.is_empty() || crate::ai::openrouter::is_openrouter_model_id(model),
-        // Chat only: no embedding model, so search uses keywords (the same
-        // state as OpenRouter without one). Many such servers serve no
-        // embeddings, and a mixed provider would need a second backend.
-        OPENAI_COMPATIBLE => model.is_empty(),
+        // The server is used for chat; the email index comes from elsewhere
+        // (see `EmbeddingSource`): none (keywords), the in-app model, or an
+        // OpenRouter embedding model.
+        OPENAI_COMPATIBLE => !matches!(EmbeddingSource::of(model), EmbeddingSource::Unusable),
         "llamacpp" => model_catalog::embedding_models().any(|m| m.id == model),
         _ => !model.is_empty() && model_catalog::find(model).is_none() && openrouter_model != Some(model),
     }
@@ -99,9 +100,38 @@ fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<
 
 fn default_embedding_model(provider: &str) -> &'static str {
     match provider {
-        "openrouter" | OPENAI_COMPATIBLE => "",
-        "llamacpp" => DEFAULT_LLAMACPP_EMBEDDING_MODEL,
+        "openrouter" => "",
+        "llamacpp" | OPENAI_COMPATIBLE => DEFAULT_LLAMACPP_EMBEDDING_MODEL,
         _ => crate::services::embeddings::DEFAULT_EMBEDDING_MODEL,
+    }
+}
+
+/// Where the OpenAI-compatible provider gets embeddings from. Not a stored
+/// preference of its own: it follows from `ai_embedding_model`, using the
+/// same rules that already tell the providers' models apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmbeddingSource {
+    /// No embedding model: search uses keywords.
+    None,
+    /// An in-app (catalogue GGUF) embedding model, computed on this machine.
+    Local(String),
+    /// An OpenRouter embedding model (`vendor/model`); needs the OpenRouter key.
+    OpenRouter(String),
+    /// Something neither can run (another provider's model).
+    Unusable,
+}
+
+impl EmbeddingSource {
+    pub fn of(model: &str) -> Self {
+        if model.is_empty() {
+            EmbeddingSource::None
+        } else if crate::ai::model_catalog::embedding_models().any(|m| m.id == model) {
+            EmbeddingSource::Local(model.to_string())
+        } else if crate::ai::openrouter::is_openrouter_model_id(model) {
+            EmbeddingSource::OpenRouter(model.to_string())
+        } else {
+            EmbeddingSource::Unusable
+        }
     }
 }
 
@@ -430,9 +460,7 @@ impl AiService {
         Ok(())
     }
 
-    /// The client for the configured OpenAI-compatible server, for chat. No
-    /// embedding model is set, so no embedding request is ever sent and
-    /// search uses keywords (see `embedding_model_usable`).
+    /// The client for the configured OpenAI-compatible server, for chat.
     pub fn openai_compatible_client(db: &Database, model: &str) -> Result<OpenRouterClient> {
         let base_url = Self::load_openai_compatible_base_url(db)?;
         let key = Self::load_openai_compatible_api_key(db)?;
@@ -442,6 +470,63 @@ impl AiService {
             model.to_string(),
             String::new(),
         ))
+    }
+
+    /// The OpenAI-compatible provider: chat from the server, and — when an
+    /// embedding model is set — embeddings from the in-app model or from
+    /// OpenRouter (see [`EmbeddingSource`]). With none, the bare client is
+    /// returned and search uses keywords.
+    fn openai_compatible_provider(
+        db: &Database,
+        model: &str,
+        embedding_model: &str,
+        keep_alive_secs: u32,
+    ) -> Result<Arc<dyn AIProvider>> {
+        let chat: Arc<dyn AIProvider> = Arc::new(Self::openai_compatible_client(db, model)?);
+        let embeddings: Arc<dyn AIProvider> = match EmbeddingSource::of(embedding_model) {
+            EmbeddingSource::None => return Ok(chat),
+            EmbeddingSource::Local(embed_model) => Self::local_embedding_provider(db, &embed_model, keep_alive_secs)?,
+            EmbeddingSource::OpenRouter(embed_model) => {
+                let mut config = Self::get_config(db)?;
+                config.embedding_model = embed_model;
+                Arc::new(Self::openrouter_client(db, config)?)
+            }
+            EmbeddingSource::Unusable => {
+                return Err(AppError::AiError(format!(
+                    "\"{embedding_model}\" cannot be used for embeddings with an OpenAI-compatible server — \
+                     choose the in-app model or an OpenRouter one in Settings → AI"
+                )));
+            }
+        };
+        Ok(Arc::new(SplitProvider::new(chat, embeddings)))
+    }
+
+    /// The in-app runtime for embeddings only (no chat model is loaded). It
+    /// shares the cached runtime, so the embedding model loads once.
+    #[cfg(feature = "llamacpp")]
+    fn local_embedding_provider(
+        db: &Database,
+        embedding_model: &str,
+        keep_alive_secs: u32,
+    ) -> Result<Arc<dyn AIProvider>> {
+        use crate::ai::llama_cpp::LlamaCppBackend;
+        ensure_embedded_runtime_supported()?;
+        let (_, embed_path) = llamacpp_model_paths(db, "", embedding_model);
+        let runtime = get_or_create_llamacpp_runtime(None, embed_path, keep_alive_secs, load_n_ctx_override(db));
+        Ok(Arc::new(LlamaCppBackend::new(
+            runtime,
+            String::new(),
+            embedding_model.to_string(),
+        )))
+    }
+
+    #[cfg(not(feature = "llamacpp"))]
+    fn local_embedding_provider(
+        _db: &Database,
+        _embedding_model: &str,
+        _keep_alive_secs: u32,
+    ) -> Result<Arc<dyn AIProvider>> {
+        Err(AppError::AiError(EMBEDDED_AI_UNAVAILABLE.to_string()))
     }
 
     pub fn store_openrouter_api_key(db: &Database, key: &str) -> Result<()> {
@@ -493,7 +578,10 @@ impl AiService {
                 config.model = model.to_string();
                 Ok(Arc::new(Self::openrouter_client(db, config)?))
             }
-            OPENAI_COMPATIBLE => Ok(Arc::new(Self::openai_compatible_client(db, model)?)),
+            OPENAI_COMPATIBLE => {
+                let embedding_model = db.get_preference("ai_embedding_model")?.unwrap_or_default();
+                Self::openai_compatible_provider(db, model, &embedding_model, keep_alive_secs)
+            }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -668,7 +756,9 @@ impl AiService {
                     .with_keep_alive(ollama_keep_alive),
             )),
             "openrouter" => Ok(Arc::new(Self::openrouter_client(db, config)?)),
-            OPENAI_COMPATIBLE => Ok(Arc::new(Self::openai_compatible_client(db, &config.model)?)),
+            OPENAI_COMPATIBLE => {
+                Self::openai_compatible_provider(db, &config.model, &config.embedding_model, keep_alive_secs)
+            }
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -1921,13 +2011,67 @@ mod provider_models_tests {
     }
 
     #[test]
-    fn an_openai_compatible_server_is_chat_only() {
-        // Whatever embedding model was set for another provider, switching to
-        // an OpenAI-compatible server stores none: search uses keywords.
-        assert_eq!(plan(OPENAI_COMPATIBLE, None, Some(GGUF_EMBED), None), "");
-        assert_eq!(plan(OPENAI_COMPATIBLE, Some("vendor/embed"), None, None), "");
-        assert_eq!(plan(OPENAI_COMPATIBLE, None, Some("bge-m3"), Some(GGUF_EMBED)), "");
-        assert_eq!(plan(OPENAI_COMPATIBLE, Some(""), None, None), "");
+    fn an_openai_compatible_server_takes_local_openrouter_or_no_embeddings() {
+        // Each of the three sources is kept as asked.
+        assert_eq!(plan(OPENAI_COMPATIBLE, Some(GGUF_EMBED), None, None), GGUF_EMBED);
+        assert_eq!(
+            plan(OPENAI_COMPATIBLE, Some("vendor/embed"), None, None),
+            "vendor/embed"
+        );
+        assert_eq!(plan(OPENAI_COMPATIBLE, Some(""), Some(GGUF_EMBED), None), "");
+        // Another provider's model (Ollama's) is replaced by the in-app default,
+        // which keeps the index on this machine.
+        assert_eq!(plan(OPENAI_COMPATIBLE, None, Some("bge-m3"), None), GGUF_EMBED);
+        assert_eq!(plan(OPENAI_COMPATIBLE, None, None, None), GGUF_EMBED);
+    }
+
+    #[test]
+    fn embedding_source_follows_the_model_id() {
+        assert_eq!(EmbeddingSource::of(""), EmbeddingSource::None);
+        assert_eq!(
+            EmbeddingSource::of(GGUF_EMBED),
+            EmbeddingSource::Local(GGUF_EMBED.into())
+        );
+        assert_eq!(
+            EmbeddingSource::of("openai/text-embedding-3-small"),
+            EmbeddingSource::OpenRouter("openai/text-embedding-3-small".into())
+        );
+        assert_eq!(EmbeddingSource::of("bge-m3"), EmbeddingSource::Unusable);
+    }
+
+    #[test]
+    fn the_openai_compatible_provider_wires_the_chosen_embedding_source() {
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(OPENAI_COMPATIBLE_BASE_URL_PREF, "http://127.0.0.1:8317/v1")
+            .unwrap();
+
+        // None: the bare server client, keyword search.
+        let none = AiService::openai_compatible_provider(&db, "claude-haiku", "", 0).unwrap();
+        assert_eq!(none.model_name(), "claude-haiku");
+        assert!(!none.embedding_configured());
+
+        // OpenRouter: chat from the server, embeddings from OpenRouter — and
+        // only once the model passed OpenRouter's check, as on its own tab.
+        AiService::store_openrouter_api_key(&db, "or-key").unwrap();
+        let unchecked = AiService::openai_compatible_provider(&db, "claude-haiku", "vendor/embed", 0).unwrap();
+        assert_eq!(unchecked.model_name(), "claude-haiku");
+        assert_eq!(unchecked.embedding_model_name(), "vendor/embed");
+        assert!(
+            !unchecked.embedding_configured(),
+            "not validated yet: nothing is sent to OpenRouter"
+        );
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "requested")
+            .unwrap();
+        let checked = AiService::openai_compatible_provider(&db, "claude-haiku", "vendor/embed", 0).unwrap();
+        assert!(checked.embedding_configured());
+
+        // Another provider's model is refused with a clear message.
+        let err = AiService::openai_compatible_provider(&db, "m", "bge-m3", 0)
+            .err()
+            .expect("unusable embedding model");
+        assert!(err.to_string().contains("OpenAI-compatible"), "{err}");
     }
 
     #[test]
@@ -1956,7 +2100,7 @@ mod provider_models_tests {
             .unwrap();
         let client = AiService::openai_compatible_client(&db, "claude-haiku").unwrap();
         assert_eq!(client.model_name(), "claude-haiku");
-        assert!(!client.embedding_configured(), "chat only");
+        assert!(!client.embedding_configured(), "the server itself embeds nothing");
         db.set_preference(OPENAI_COMPATIBLE_BASE_URL_PREF, "http://api.example.com/v1")
             .unwrap();
         assert!(
