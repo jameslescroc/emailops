@@ -21,9 +21,20 @@ interface OpenRouterPanelProps {
   embeddingNeedsCheck: boolean;
 }
 
+/** Inputs shared by both modes. */
+const INPUT_CLASS =
+  'w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono';
+
 /**
- * Cloud OpenRouter panel — API key, free-form chat model id, an optional
- * embedding model and a monthly USD budget cap.
+ * Panel for the two providers that speak the OpenAI Chat Completions API:
+ * OpenRouter, and a user-configured OpenAI-compatible server (LM Studio,
+ * vLLM, llama-server, LiteLLM, a local proxy…). The server mode adds a base
+ * URL, makes the key optional, and drops what only OpenRouter has: its
+ * embedding models, budget/usage (costs are not reported), data policy and
+ * zero data retention. It is chat only — search uses keywords.
+ *
+ * OpenRouter mode: API key, free-form chat model id, an optional embedding
+ * model and a monthly USD budget cap.
  *
  * With OpenRouter selected, embeddings run on OpenRouter too: the text of
  * every indexed email and every search or chat query is sent there, which is
@@ -46,6 +57,7 @@ export function OpenRouterPanel({
   embeddingNeedsCheck,
 }: OpenRouterPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
+  const custom = config.provider === 'openai_compatible';
   // Recommended models lead the list (they are offered before the catalogue
   // has loaded too); the rest of the catalogue follows, each model once.
   const { none, recommended } = recommendedEmbeddingOptions(t);
@@ -63,10 +75,31 @@ export function OpenRouterPanel({
   ];
   return (
     <div className="space-y-4">
+      {custom && (
+        <div>
+          <label htmlFor="ai-base-url" className="block text-sm font-medium text-gray-300 mb-1">
+            {t('settings:openAiCompatible.baseUrl')}
+          </label>
+          <input
+            id="ai-base-url"
+            value={config.baseUrl}
+            onChange={(e) => setConfig({ ...config, baseUrl: e.target.value })}
+            placeholder={'http://localhost:1234/v1'} // i18n-ignore: example server URL, not user-facing copy
+            spellCheck={false}
+            className={INPUT_CLASS}
+          />
+          <p className="text-xs text-gray-500 mt-1">{t('settings:openAiCompatible.baseUrlHelp')}</p>
+        </div>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">
           {t('settings:ai.apiKey')}
-          {config.hasApiKey && <span className="text-gray-500 font-normal"> {t('settings:ai.apiKeySaved')}</span>}
+          {custom && (
+            <span className="text-gray-500 font-normal"> {t('settings:openAiCompatible.apiKeyOptional')}</span>
+          )}
+          {(custom ? config.hasBaseUrlApiKey : config.hasApiKey) && (
+            <span className="text-gray-500 font-normal"> {t('settings:ai.apiKeySaved')}</span>
+          )}
         </label>
         <input
           type="password"
@@ -82,42 +115,48 @@ export function OpenRouterPanel({
           type="text"
           value={config.model}
           onChange={(e) => setConfig({ ...config, model: e.target.value })}
-          placeholder={t('settings:openRouter.chatModelPlaceholder')}
+          placeholder={
+            custom ? t('settings:openAiCompatible.chatModelPlaceholder') : t('settings:openRouter.chatModelPlaceholder')
+          }
           className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
         />
       </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
-        <Select
-          value={config.embeddingModel}
-          options={embeddingOptions}
-          onChange={(value) => setConfig({ ...config, embeddingModel: value })}
-          ariaLabel={t('settings:ai.embeddingModel')}
-          fullWidth
-        />
-        <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>
-        {!config.hasApiKey && (
-          <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNeedsKey')}</p>
-        )}
-        {embeddingNeedsCheck && (
-          <p className="text-xs text-amber-400 mt-1">{t('settings:openRouter.embeddingNeedsCheck')}</p>
-        )}
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.monthlyBudget')}</label>
-        <input
-          type="number"
-          min={0}
-          step={0.5}
-          value={config.monthlyBudgetUsd}
-          onChange={(e) => setConfig({ ...config, monthlyBudgetUsd: parseFloat(e.target.value) || 0 })}
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
-        />
-        <p className="text-xs text-gray-500 mt-1">{t('settings:ai.monthlyBudgetHelp')}</p>
-      </div>
-      {/* Directly under the cap it reports against, so hitting the budget and
+      {!custom && (
+        <>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
+            <Select
+              value={config.embeddingModel}
+              options={embeddingOptions}
+              onChange={(value) => setConfig({ ...config, embeddingModel: value })}
+              ariaLabel={t('settings:ai.embeddingModel')}
+              fullWidth
+            />
+            <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>
+            {!config.hasApiKey && (
+              <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNeedsKey')}</p>
+            )}
+            {embeddingNeedsCheck && (
+              <p className="text-xs text-amber-400 mt-1">{t('settings:openRouter.embeddingNeedsCheck')}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.monthlyBudget')}</label>
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              value={config.monthlyBudgetUsd}
+              onChange={(e) => setConfig({ ...config, monthlyBudgetUsd: parseFloat(e.target.value) || 0 })}
+              className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+            />
+            <p className="text-xs text-gray-500 mt-1">{t('settings:ai.monthlyBudgetHelp')}</p>
+          </div>
+          {/* Directly under the cap it reports against, so hitting the budget and
           finding out what you spent are the same screen. */}
-      <UsageSummary />
+          <UsageSummary />
+        </>
+      )}
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:openRouter.contextBudget')}</label>
         <p className="text-xs text-gray-500 mb-2">{t('settings:openRouter.contextBudgetHelp')}</p>
@@ -134,30 +173,35 @@ export function OpenRouterPanel({
           className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
         />
       </div>
-      <p className="text-xs text-gray-500">{t('settings:openRouter.noTrainingNotice')}</p>
-      <div className="flex items-center justify-between">
-        <div>
-          <label className="block text-sm font-medium text-gray-300">
-            {t('settings:openRouter.zeroDataRetention')}
-          </label>
-          <p className="text-xs text-gray-500 mt-0.5">{t('settings:openRouter.zeroDataRetentionHelp')}</p>
-        </div>
-        <button
-          type="button"
-          aria-label={t('settings:openRouter.zeroDataRetention')}
-          aria-pressed={config.zeroDataRetention}
-          onClick={() => setConfig({ ...config, zeroDataRetention: !config.zeroDataRetention })}
-          className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-            config.zeroDataRetention ? 'bg-primary-600' : 'bg-gray-600'
-          }`}
-        >
-          <span
-            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-              config.zeroDataRetention ? 'translate-x-5' : 'translate-x-0'
-            }`}
-          />
-        </button>
-      </div>
+      {!custom && (
+        <>
+          <p className="text-xs text-gray-500">{t('settings:openRouter.noTrainingNotice')}</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium text-gray-300">
+                {t('settings:openRouter.zeroDataRetention')}
+              </label>
+              <p className="text-xs text-gray-500 mt-0.5">{t('settings:openRouter.zeroDataRetentionHelp')}</p>
+            </div>
+            <button
+              type="button"
+              aria-label={t('settings:openRouter.zeroDataRetention')}
+              aria-pressed={config.zeroDataRetention}
+              onClick={() => setConfig({ ...config, zeroDataRetention: !config.zeroDataRetention })}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                config.zeroDataRetention ? 'bg-primary-600' : 'bg-gray-600'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  config.zeroDataRetention ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+        </>
+      )}
+      {custom && <p className="text-xs text-gray-500">{t('settings:openAiCompatible.privacyNotice')}</p>}
       <ThinkingToggle
         enabled={config.thinkingEnabled}
         onToggle={() => setConfig({ ...config, thinkingEnabled: !config.thinkingEnabled })}

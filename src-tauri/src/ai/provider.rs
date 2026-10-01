@@ -9,6 +9,11 @@ pub enum ProviderType {
     Ollama,
     OpenRouter,
     LlamaCpp,
+    /// A user-configured OpenAI-compatible server (LM Studio, vLLM,
+    /// llama-server, LiteLLM, a local proxy…), driven by the OpenRouter client
+    /// without OpenRouter's routing object and headers.
+    #[serde(rename = "openai_compatible")]
+    OpenAiCompatible,
 }
 
 impl std::fmt::Display for ProviderType {
@@ -17,6 +22,7 @@ impl std::fmt::Display for ProviderType {
             ProviderType::Ollama => write!(f, "ollama"),
             ProviderType::OpenRouter => write!(f, "openrouter"),
             ProviderType::LlamaCpp => write!(f, "llamacpp"),
+            ProviderType::OpenAiCompatible => write!(f, "openai_compatible"),
         }
     }
 }

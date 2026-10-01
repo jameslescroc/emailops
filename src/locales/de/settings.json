@@ -83,6 +83,8 @@
     "providerOllamaDesc": "Lokaler Ollama-Server",
     "providerOpenRouterLabel": "OpenRouter",
     "providerOpenRouterDesc": "Cloud-API (kostenpflichtig)",
+    "providerOpenAiCompatibleLabel": "OpenAI-kompatibel",
+    "providerOpenAiCompatibleDesc": "Eigener Server (LM Studio, vLLM, ein Proxy…)",
     "routingMode": "Chat-Routing-Modus",
     "routingModeHelp": "Wie der Chat zwischen RAG-Abruf und direkten Tool-Aufrufen entscheidet.",
     "routingAlwaysRag": "Immer RAG zuerst (Standard)",
@@ -183,6 +185,15 @@
     "embeddingCheckFailed": "Es wurde nichts gespeichert – das Embeddings-Modell kann nicht verwendet werden: {{error}}",
     "embeddingZdrBlocked": "Es wurde nichts gespeichert – kein Anbieter des Embeddings-Modells {{model}} erfüllt die Einstellung ohne Datenspeicherung. Schalte „Nur ohne Datenspeicherung“ unter Einstellungen → KI → OpenRouter aus oder verwende kein Embeddings-Modell (nur Stichwortsuche).",
     "embeddingListFailed": "Die Embeddings-Modelle von OpenRouter konnten nicht geladen werden: {{error}}"
+  },
+  "openAiCompatible": {
+    "baseUrl": "Server-URL",
+    "baseUrlHelp": "Der OpenAI-kompatible Endpunkt, meist mit /v1 am Ende. Unverschlüsseltes http ist nur für diesen Rechner oder das lokale Netzwerk erlaubt.",
+    "baseUrlRequired": "Geben Sie vor dem Speichern die Server-URL ein.",
+    "apiKeyOptional": "(optional)",
+    "chatModelPlaceholder": "Modell-ID, wie Ihr Server sie auflistet",
+    "chatModelRequired": "Geben Sie vor dem Speichern die Modell-ID Ihres Servers ein.",
+    "privacyNotice": "E-Mail-Inhalte werden für Chat und Entwürfe an diesen Server gesendet. Er dient nur dem Chat: Die semantische Suche nutzt Stichwörter."
   },
   "confirmReindex": {
     "title": "Alle Embeddings neu erzeugen?",

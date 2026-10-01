@@ -110,6 +110,11 @@ describe('chatModelForProvider', () => {
     expect(chatModelForProvider('llamacpp', null, nothingLocal)).toBe('');
     expect(chatModelForProvider('ollama', null, nothingLocal)).toBe('');
   });
+
+  it('suggests no model for an OpenAI-compatible server (its ids are its own)', () => {
+    expect(chatModelForProvider('openai_compatible', null, lists)).toBe('');
+    expect(chatModelForProvider('openai_compatible', 'claude-haiku', lists)).toBe('claude-haiku');
+  });
 });
 
 describe('embeddingModelChanged', () => {
@@ -130,6 +135,8 @@ describe('needsEmbeddingProbe', () => {
     hasApiKey: true,
     thinkingEnabled: false,
     zeroDataRetention: false,
+    baseUrl: '',
+    hasBaseUrlApiKey: false,
   };
 
   it('asks for a probe only for an OpenRouter model that has not passed one', () => {

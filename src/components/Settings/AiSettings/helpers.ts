@@ -75,6 +75,8 @@ export function chatModelForProvider(
   if (remembered) return remembered;
   if (next === 'ollama') return available.ollamaModels[0] ?? '';
   if (next === 'llamacpp') return available.catalog.find((m) => m.kind === 'chat' && m.isLocal)?.id ?? '';
+  // Model ids are whatever the user's server lists: no sensible default.
+  if (next === 'openai_compatible') return '';
   return DEFAULT_OPENROUTER_CHAT_MODEL;
 }
 

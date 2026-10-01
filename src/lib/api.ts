@@ -922,6 +922,8 @@ export async function setAiConfig(
   thinkingEnabled?: boolean,
   // Omitted keeps the stored choice (the backend treats a missing value as "unchanged").
   zeroDataRetention?: boolean,
+  // OpenAI-compatible server address; omitted keeps the stored one.
+  baseUrl?: string,
 ): Promise<void> {
   return invoke('set_ai_config', {
     provider,
@@ -931,6 +933,7 @@ export async function setAiConfig(
     monthlyBudgetUsd: monthlyBudgetUsd ?? 0,
     thinkingEnabled: thinkingEnabled ?? false,
     zeroDataRetention,
+    baseUrl,
   });
 }
 
@@ -964,8 +967,14 @@ export async function validateOpenRouterEmbeddingModel(
   return invoke('validate_openrouter_embedding_model', { model, apiKey, zeroDataRetention });
 }
 
-export async function testAiProvider(provider: string, model: string, apiKey?: string | null): Promise<string> {
-  return invoke('test_ai_provider', { provider, model, apiKey });
+export async function testAiProvider(
+  provider: string,
+  model: string,
+  apiKey?: string | null,
+  // OpenAI-compatible server address typed but maybe not saved yet.
+  baseUrl?: string,
+): Promise<string> {
+  return invoke('test_ai_provider', { provider, model, apiKey, baseUrl });
 }
 
 export async function getEmbeddingsConfig(accountId: string): Promise<EmbeddingsConfig> {

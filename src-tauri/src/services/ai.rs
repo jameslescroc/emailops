@@ -47,8 +47,17 @@ const OPENROUTER_ZDR_PREF: &str = "openrouter_zdr";
 const OPENROUTER_EMBED_VALIDATED_PREF: &str = "openrouter_embedding_validated_model";
 const OPENROUTER_EMBED_DIMENSIONS_PREF: &str = "openrouter_embedding_dimensions";
 
+/// Provider id of a user-configured OpenAI-compatible server.
+pub const OPENAI_COMPATIBLE: &str = "openai_compatible";
+/// Its base URL (e.g. `http://localhost:1234/v1`) and key, kept apart from
+/// OpenRouter's so switching between the two never mixes them up.
+pub const OPENAI_COMPATIBLE_BASE_URL_PREF: &str = "openai_compatible_base_url";
+const OPENAI_COMPATIBLE_KEY_ID: &str = "openai_compatible_api_key";
+const OPENAI_COMPATIBLE_KEY_ID_PREF: &str = "openai_compatible_api_key_id";
+const OPENAI_COMPATIBLE_DEV_KEY_PREF: &str = "openai_compatible_api_key_dev";
+
 /// Every provider a config can be saved for.
-const PROVIDERS: [&str; 3] = ["llamacpp", "ollama", "openrouter"];
+const PROVIDERS: [&str; 4] = ["llamacpp", "ollama", "openrouter", OPENAI_COMPATIBLE];
 /// The in-app embedding model a fresh install is configured with.
 const DEFAULT_LLAMACPP_EMBEDDING_MODEL: &str = "nomic-embed-text-v1.5-q4_k_m";
 
@@ -79,6 +88,10 @@ fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<
     use crate::ai::model_catalog;
     match provider {
         "openrouter" => model.is_empty() || crate::ai::openrouter::is_openrouter_model_id(model),
+        // Chat only: no embedding model, so search uses keywords (the same
+        // state as OpenRouter without one). Many such servers serve no
+        // embeddings, and a mixed provider would need a second backend.
+        OPENAI_COMPATIBLE => model.is_empty(),
         "llamacpp" => model_catalog::embedding_models().any(|m| m.id == model),
         _ => !model.is_empty() && model_catalog::find(model).is_none() && openrouter_model != Some(model),
     }
@@ -86,7 +99,7 @@ fn embedding_model_usable(provider: &str, model: &str, openrouter_model: Option<
 
 fn default_embedding_model(provider: &str) -> &'static str {
     match provider {
-        "openrouter" => "",
+        "openrouter" | OPENAI_COMPATIBLE => "",
         "llamacpp" => DEFAULT_LLAMACPP_EMBEDDING_MODEL,
         _ => crate::services::embeddings::DEFAULT_EMBEDDING_MODEL,
     }
@@ -381,6 +394,56 @@ impl AiService {
             .ok_or_else(|| AppError::AiError("OpenRouter API key not configured".to_string()))
     }
 
+    /// The OpenAI-compatible server's base URL, validated; an error when none
+    /// is configured (the provider cannot work without one).
+    pub fn load_openai_compatible_base_url(db: &Database) -> Result<String> {
+        let raw = db.get_preference(OPENAI_COMPATIBLE_BASE_URL_PREF)?.unwrap_or_default();
+        normalize_ai_base_url(&raw)
+    }
+
+    /// The OpenAI-compatible server's key, or "" when none was saved — many
+    /// local servers need none.
+    pub fn load_openai_compatible_api_key(db: &Database) -> Result<String> {
+        if Self::use_dev_ai_keys() {
+            return Ok(db.get_preference(OPENAI_COMPATIBLE_DEV_KEY_PREF)?.unwrap_or_default());
+        }
+        let Some(id) = db.get_preference(OPENAI_COMPATIBLE_KEY_ID_PREF)? else {
+            return Ok(String::new());
+        };
+        Ok(super::secrets_vault::get(KEYRING_SERVICE, &id)?.unwrap_or_default())
+    }
+
+    pub fn has_openai_compatible_api_key(db: &Database) -> Result<bool> {
+        Ok(!Self::load_openai_compatible_api_key(db)?.is_empty())
+    }
+
+    /// Save (or, with "", forget) the OpenAI-compatible server's key. Stored
+    /// in the OS keychain like OpenRouter's, never in preferences or logs.
+    pub fn store_openai_compatible_api_key(db: &Database, key: &str) -> Result<()> {
+        if Self::use_dev_ai_keys() {
+            db.set_preference(OPENAI_COMPATIBLE_DEV_KEY_PREF, key)?;
+            db.set_preference(OPENAI_COMPATIBLE_KEY_ID_PREF, OPENAI_COMPATIBLE_KEY_ID)?;
+            return Ok(());
+        }
+        super::secrets_vault::set(KEYRING_SERVICE, OPENAI_COMPATIBLE_KEY_ID, key)?;
+        db.set_preference(OPENAI_COMPATIBLE_KEY_ID_PREF, OPENAI_COMPATIBLE_KEY_ID)?;
+        Ok(())
+    }
+
+    /// The client for the configured OpenAI-compatible server, for chat. No
+    /// embedding model is set, so no embedding request is ever sent and
+    /// search uses keywords (see `embedding_model_usable`).
+    pub fn openai_compatible_client(db: &Database, model: &str) -> Result<OpenRouterClient> {
+        let base_url = Self::load_openai_compatible_base_url(db)?;
+        let key = Self::load_openai_compatible_api_key(db)?;
+        Ok(OpenRouterClient::openai_compatible(
+            &base_url,
+            key,
+            model.to_string(),
+            String::new(),
+        ))
+    }
+
     pub fn store_openrouter_api_key(db: &Database, key: &str) -> Result<()> {
         if Self::env_openrouter_api_key().is_some() {
             return Ok(());
@@ -430,6 +493,7 @@ impl AiService {
                 config.model = model.to_string();
                 Ok(Arc::new(Self::openrouter_client(db, config)?))
             }
+            OPENAI_COMPATIBLE => Ok(Arc::new(Self::openai_compatible_client(db, model)?)),
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -604,6 +668,7 @@ impl AiService {
                     .with_keep_alive(ollama_keep_alive),
             )),
             "openrouter" => Ok(Arc::new(Self::openrouter_client(db, config)?)),
+            OPENAI_COMPATIBLE => Ok(Arc::new(Self::openai_compatible_client(db, &config.model)?)),
             #[cfg(feature = "llamacpp")]
             "llamacpp" => {
                 use crate::ai::llama_cpp::LlamaCppBackend;
@@ -804,6 +869,7 @@ impl AiService {
             // to the OpenRouter slot regardless of provider.
             match provider {
                 "openrouter" => Self::store_openrouter_api_key(db, key)?,
+                OPENAI_COMPATIBLE => Self::store_openai_compatible_api_key(db, key)?,
                 _ => {
                     // No-op: ollama / llamacpp don't take a key. Silently
                     // ignore so a stray key doesn't get stored under the
@@ -1147,20 +1213,19 @@ impl AiService {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Reject AI provider base URLs that aren't plain `http://` or `https://`.
-///
 /// Anything else (`file:`, `javascript:`, `data:`, `gopher:`, custom schemes …)
 /// would either point the AI HTTP client at the local filesystem or open up
-/// SSRF-style pivots through another protocol handler. We don't try to be
-/// clever about private/loopback IPs here because the supported vllm/Ollama
-/// deployment is *meant* to run on `127.0.0.1` / `localhost`; the rule we
-/// actually want to enforce is "must be an HTTP(S) URL with a host".
+/// SSRF-style pivots through another protocol handler. Local servers (vLLM,
+/// LM Studio, llama-server, a proxy…) are *meant* to run on `127.0.0.1` /
+/// `localhost`, so loopback is fine; what is refused is plain `http` to a
+/// public host, which would send email content in the clear, and
+/// credentials embedded in the URL (they belong in the API key field).
 pub fn validate_ai_base_url(raw: &str) -> Result<()> {
     let parsed = url::Url::parse(raw).map_err(|e| {
         AppError::AiError(format!(
             "Invalid AI base URL '{raw}': {e}. Expected an http(s) URL such as http://localhost:8080."
         ))
     })?;
-
     match parsed.scheme() {
         "http" | "https" => {}
         other => {
@@ -1169,12 +1234,49 @@ pub fn validate_ai_base_url(raw: &str) -> Result<()> {
             )));
         }
     }
-
-    if parsed.host_str().is_none_or(|h| h.is_empty()) {
+    let Some(host) = parsed.host().filter(|h| !h.to_string().is_empty()) else {
         return Err(AppError::AiError(format!("AI base URL '{raw}' has no host component.")));
+    };
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AppError::AiError(
+            "Put the API key in its own field, not in the AI base URL.".to_string(),
+        ));
     }
-
+    if parsed.scheme() == "http" && !is_local_host(&host) {
+        return Err(AppError::AiError(format!(
+            "AI base URL '{raw}' uses plain http to a public host, which would send email content unencrypted. \
+             Use https, or a server on this machine or the local network."
+        )));
+    }
     Ok(())
+}
+
+/// [`validate_ai_base_url`], returning the URL as requests are built from it
+/// (trimmed, no trailing slash). An empty value means "not configured".
+pub fn normalize_ai_base_url(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err(AppError::AiError(
+            "No server URL is set — enter one in Settings → AI → OpenAI-compatible".to_string(),
+        ));
+    }
+    validate_ai_base_url(trimmed)?;
+    Ok(trimmed.to_string())
+}
+
+/// Loopback, private (RFC 1918 / unique-local), link-local or `.local` hosts.
+fn is_local_host(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Ipv4(ip) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        url::Host::Ipv6(ip) => {
+            let first = ip.segments()[0];
+            ip.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+        url::Host::Domain(name) => {
+            let name = name.to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local")
+        }
+    }
 }
 
 /// Compute `(chat_model_path, embed_model_path)` for the llamacpp backend.
@@ -1819,6 +1921,51 @@ mod provider_models_tests {
     }
 
     #[test]
+    fn an_openai_compatible_server_is_chat_only() {
+        // Whatever embedding model was set for another provider, switching to
+        // an OpenAI-compatible server stores none: search uses keywords.
+        assert_eq!(plan(OPENAI_COMPATIBLE, None, Some(GGUF_EMBED), None), "");
+        assert_eq!(plan(OPENAI_COMPATIBLE, Some("vendor/embed"), None, None), "");
+        assert_eq!(plan(OPENAI_COMPATIBLE, None, Some("bge-m3"), Some(GGUF_EMBED)), "");
+        assert_eq!(plan(OPENAI_COMPATIBLE, Some(""), None, None), "");
+    }
+
+    #[test]
+    fn an_openai_compatible_provider_saves_its_key_apart_from_openrouter() {
+        let db = Database::new_for_testing().unwrap();
+        AiService::save_config(&db, OPENAI_COMPATIBLE, "m", None, Some("local-key"), 0.0, None, None).unwrap();
+        assert_eq!(AiService::load_openai_compatible_api_key(&db).unwrap(), "local-key");
+        assert!(AiService::has_openai_compatible_api_key(&db).unwrap());
+        assert!(
+            !AiService::has_openrouter_api_key(&db).unwrap(),
+            "must not land in OpenRouter's slot"
+        );
+        // No key saved is fine for a local server.
+        let fresh = Database::new_for_testing().unwrap();
+        assert_eq!(AiService::load_openai_compatible_api_key(&fresh).unwrap(), "");
+    }
+
+    #[test]
+    fn the_openai_compatible_client_needs_a_valid_url() {
+        let db = Database::new_for_testing().unwrap();
+        assert!(
+            AiService::openai_compatible_client(&db, "m").is_err(),
+            "no URL configured"
+        );
+        db.set_preference(OPENAI_COMPATIBLE_BASE_URL_PREF, "http://127.0.0.1:8317/v1/")
+            .unwrap();
+        let client = AiService::openai_compatible_client(&db, "claude-haiku").unwrap();
+        assert_eq!(client.model_name(), "claude-haiku");
+        assert!(!client.embedding_configured(), "chat only");
+        db.set_preference(OPENAI_COMPATIBLE_BASE_URL_PREF, "http://api.example.com/v1")
+            .unwrap();
+        assert!(
+            AiService::openai_compatible_client(&db, "m").is_err(),
+            "plain http to a public host"
+        );
+    }
+
+    #[test]
     fn the_plan_says_what_it_corrected() {
         let kept = plan_embedding_model("ollama", Some("bge-m3"), None, None, None);
         assert_eq!(kept.corrected_from, None);
@@ -1947,7 +2094,7 @@ mod provider_models_tests {
 
 #[cfg(test)]
 mod url_validation_tests {
-    use super::validate_ai_base_url;
+    use super::{normalize_ai_base_url, validate_ai_base_url};
 
     #[test]
     fn accepts_localhost_and_https_hosts() {
@@ -1968,6 +2115,42 @@ mod url_validation_tests {
     fn rejects_malformed_input() {
         assert!(validate_ai_base_url("not a url").is_err());
         assert!(validate_ai_base_url("http://").is_err());
+    }
+
+    #[test]
+    fn plain_http_only_for_local_servers() {
+        // This machine and the local network: the OpenAI-compatible servers
+        // people run (LM Studio, vLLM, llama-server, a proxy…).
+        for ok in [
+            "http://127.0.0.1:8317/v1",
+            "http://localhost:1234/v1",
+            "http://192.168.1.20:8000/v1",
+            "http://10.0.0.5/v1",
+            "http://[::1]:8080/v1",
+            "http://nas.local:8080/v1",
+        ] {
+            assert!(validate_ai_base_url(ok).is_ok(), "should accept {ok}");
+        }
+        // A public host over plain http would send email content unencrypted.
+        assert!(validate_ai_base_url("http://api.example.com/v1").is_err());
+        assert!(validate_ai_base_url("http://8.8.8.8/v1").is_err());
+        assert!(validate_ai_base_url("https://api.example.com/v1").is_ok());
+    }
+
+    #[test]
+    fn refuses_credentials_in_the_url() {
+        assert!(validate_ai_base_url("https://user:secret@api.example.com/v1").is_err());
+        assert!(validate_ai_base_url("http://key@localhost:1234/v1").is_err());
+    }
+
+    #[test]
+    fn normalizes_and_requires_a_url() {
+        assert_eq!(
+            normalize_ai_base_url("  http://127.0.0.1:8317/v1/  ").unwrap(),
+            "http://127.0.0.1:8317/v1"
+        );
+        assert!(normalize_ai_base_url("").is_err());
+        assert!(normalize_ai_base_url("   ").is_err());
     }
 }
 

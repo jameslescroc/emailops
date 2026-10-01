@@ -37,6 +37,8 @@ const baseConfig: AiConfigState = {
   hasApiKey: true,
   thinkingEnabled: false,
   zeroDataRetention: false,
+  baseUrl: '',
+  hasBaseUrlApiKey: false,
 };
 
 describe('OpenRouterPanel', () => {
@@ -173,5 +175,56 @@ describe('OpenRouterPanel', () => {
   it('states that providers may never train on mail', () => {
     render(baseConfig);
     expect(container.textContent).toContain('settings:openRouter.noTrainingNotice');
+  });
+
+  describe('OpenAI-compatible server mode', () => {
+    const serverConfig: AiConfigState = {
+      ...baseConfig,
+      provider: 'openai_compatible',
+      model: 'claude-haiku',
+      hasApiKey: true,
+      baseUrl: 'http://127.0.0.1:8317/v1',
+    };
+
+    function baseUrlInput(): HTMLInputElement | null {
+      return container.querySelector<HTMLInputElement>('#ai-base-url');
+    }
+
+    it('asks for the server URL and edits it', () => {
+      const setConfig = render(serverConfig);
+      const input = baseUrlInput();
+      expect(input?.value).toBe('http://127.0.0.1:8317/v1');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      act(() => {
+        setValue?.call(input, 'http://localhost:1234/v1');
+        input?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(setConfig).toHaveBeenCalledWith({ ...serverConfig, baseUrl: 'http://localhost:1234/v1' });
+    });
+
+    it("marks the key optional and shows the server key state, not OpenRouter's", () => {
+      render(serverConfig);
+      expect(container.textContent).toContain('settings:openAiCompatible.apiKeyOptional');
+      // OpenRouter's key is saved, the server's is not: no "saved" badge here.
+      expect(container.textContent).not.toContain('settings:ai.apiKeySaved');
+      render({ ...serverConfig, hasBaseUrlApiKey: true });
+      expect(container.textContent).toContain('settings:ai.apiKeySaved');
+    });
+
+    it('hides what only OpenRouter has, keeps the context budget, and states where mail goes', () => {
+      render(serverConfig);
+      expect(container.querySelector('select[aria-label="settings:ai.embeddingModel"]')).toBeNull();
+      expect(container.querySelector('button[aria-label="settings:openRouter.zeroDataRetention"]')).toBeNull();
+      expect(container.textContent).not.toContain('settings:ai.monthlyBudget');
+      expect(container.textContent).not.toContain('settings:openRouter.noTrainingNotice');
+      expect(budgetInput()).not.toBeNull();
+      expect(container.textContent).toContain('settings:openAiCompatible.privacyNotice');
+    });
+
+    it('has no URL field in OpenRouter mode', () => {
+      render(baseConfig);
+      expect(baseUrlInput()).toBeNull();
+      expect(container.textContent).not.toContain('settings:openAiCompatible.apiKeyOptional');
+    });
   });
 });

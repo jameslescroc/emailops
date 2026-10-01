@@ -26,7 +26,13 @@ import {
 import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
-import { type AiConfigState, DEFAULT_ROUTING_MODE, isRoutingMode, type RoutingMode } from './AiSettings/types';
+import {
+  type AiConfigState,
+  DEFAULT_ROUTING_MODE,
+  isRemoteOpenAiProvider,
+  isRoutingMode,
+  type RoutingMode,
+} from './AiSettings/types';
 import { SettingsPanel } from './SettingsPanel';
 
 /**
@@ -202,6 +208,8 @@ export function AiSettings() {
         hasApiKey: cfg.hasApiKey,
         thinkingEnabled: cfg.thinkingEnabled,
         zeroDataRetention: cfg.zeroDataRetention,
+        baseUrl: cfg.openAiCompatibleBaseUrl ?? '',
+        hasBaseUrlApiKey: cfg.openAiCompatibleHasApiKey ?? false,
       });
       savedEmbedModelRef.current = cfg.embeddingModel;
       savedBackendRef.current = { provider: cfg.provider, model: cfg.model };
@@ -419,6 +427,16 @@ export function AiSettings() {
       setError(t('settings:openRouter.chatModelRequired'));
       return;
     }
+    if (config.provider === 'openai_compatible') {
+      if (config.baseUrl.trim() === '') {
+        setError(t('settings:openAiCompatible.baseUrlRequired'));
+        return;
+      }
+      if (config.model.trim() === '') {
+        setError(t('settings:openAiCompatible.chatModelRequired'));
+        return;
+      }
+    }
     void saveUnlessWorkInProgress();
   };
 
@@ -466,7 +484,7 @@ export function AiSettings() {
     setSaving(true);
     try {
       const prevEmbedModel = savedEmbedModelRef.current;
-      const wantsApiKey = config.provider === 'openrouter';
+      const wantsApiKey = isRemoteOpenAiProvider(config.provider);
       const key = wantsApiKey && apiKey ? apiKey : null;
 
       // An OpenRouter embedding model must fit the email index before it is
@@ -492,6 +510,7 @@ export function AiSettings() {
         config.monthlyBudgetUsd,
         config.thinkingEnabled,
         config.zeroDataRetention,
+        config.provider === 'openai_compatible' ? config.baseUrl.trim() : undefined,
       );
       savedEmbedModelRef.current = config.embeddingModel;
 
@@ -546,7 +565,7 @@ export function AiSettings() {
         }
       }
 
-      if (config.provider === 'openrouter' && contextBudget !== contextBudgetLoadedRef.current) {
+      if (isRemoteOpenAiProvider(config.provider) && contextBudget !== contextBudgetLoadedRef.current) {
         try {
           const tokens = contextBudgetToPref(contextBudget);
           await api.setPref('chat.remote_n_ctx_budget', tokens);
@@ -585,9 +604,14 @@ export function AiSettings() {
     setError(null);
     setSuccess(null);
     try {
-      const wantsApiKey = config.provider === 'openrouter';
+      const wantsApiKey = isRemoteOpenAiProvider(config.provider);
       const key = wantsApiKey && apiKey ? apiKey : null;
-      const result = await api.testAiProvider(config.provider, config.model, key);
+      const result = await api.testAiProvider(
+        config.provider,
+        config.model,
+        key,
+        config.provider === 'openai_compatible' ? config.baseUrl.trim() : undefined,
+      );
       setSuccess(t('settings:ai.testPassed', { result: result.substring(0, 120) }));
     } catch (err) {
       setError(t('settings:ai.testFailed', { error: errorText(err) }));
@@ -711,6 +735,12 @@ export function AiSettings() {
                   description={t('settings:ai.providerOpenRouterDesc')}
                   onClick={() => handleProviderChange('openrouter')}
                 />
+                <ProviderTab
+                  active={config.provider === 'openai_compatible'}
+                  label={t('settings:ai.providerOpenAiCompatibleLabel')}
+                  description={t('settings:ai.providerOpenAiCompatibleDesc')}
+                  onClick={() => handleProviderChange('openai_compatible')}
+                />
               </div>
             </div>
 
@@ -736,7 +766,7 @@ export function AiSettings() {
               />
             )}
 
-            {config.provider === 'openrouter' && (
+            {isRemoteOpenAiProvider(config.provider) && (
               <OpenRouterPanel
                 config={config}
                 setConfig={setConfig}
@@ -755,7 +785,7 @@ export function AiSettings() {
               onRoutingModeChange={(mode) => void handleRoutingModeChange(mode)}
               keepAliveMinutes={keepAliveMinutes}
               onKeepAliveChange={setKeepAliveMinutes}
-              showKeepAlive={config.provider !== 'openrouter'}
+              showKeepAlive={!isRemoteOpenAiProvider(config.provider)}
               aiMaxEmailCount={aiMaxEmailCount}
               onMaxEmailCountChange={setAiMaxEmailCount}
               aiMaxEmailAgeDays={aiMaxEmailAgeDays}

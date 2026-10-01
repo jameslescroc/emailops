@@ -16,6 +16,19 @@ use crate::db::embeddings::EMAIL_EMBEDDING_DIM;
 use crate::models::error::{AppError, Result};
 
 const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+/// Which server this client talks to. Both speak the OpenAI Chat Completions
+/// API; OpenRouter adds a routing/data-policy object and attribution headers
+/// that a plain OpenAI-compatible server (LM Studio, vLLM, llama-server,
+/// LiteLLM, a local proxy…) does not know and may reject.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Endpoint {
+    /// openrouter.ai, with its data policy and `vendor/model` ids.
+    OpenRouter,
+    /// A user-configured OpenAI-compatible server. Model ids are whatever the
+    /// server lists; the API key is optional (many local servers need none).
+    OpenAiCompatible,
+}
 const APP_NAME: &str = "emailops";
 const APP_URL: &str = "https://github.com/emailops";
 
@@ -45,7 +58,9 @@ struct OpenRouterChatRequest {
     /// the chat tool registry already produces.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
-    provider: ProviderPreferences,
+    /// OpenRouter only; omitted for a plain OpenAI-compatible server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<ProviderPreferences>,
 }
 
 /// OpenRouter routing constraints sent with every request that carries mail
@@ -96,22 +111,25 @@ pub fn is_openrouter_model_id(model: &str) -> bool {
             .is_some_and(|(vendor, name)| !vendor.is_empty() && !name.is_empty())
 }
 
-/// The error for a chat turn OpenRouter refused before streaming anything.
+/// The error for a chat turn the server refused before streaming anything.
 /// Says what the status means, so a rate limit or an outage does not reach
-/// the user as a bare JSON body.
-fn stream_request_error(status: u16, body: &str, model: &str) -> AppError {
+/// the user as a bare JSON body. `server` names it (see `server_name`), so a
+/// local server's failure is not blamed on OpenRouter.
+fn stream_request_error(status: u16, body: &str, model: &str, server: &str) -> AppError {
     let what = match status {
-        402 => "OpenRouter refused the request: the account is out of credits",
-        429 => "OpenRouter rate limit reached — wait a moment and try again",
-        500..=599 => "OpenRouter or the model's provider is unavailable — try again, or choose another model",
-        _ => "OpenRouter chat error",
+        401 | 403 => format!("{server} refused the request: check the API key"),
+        402 => format!("{server} refused the request: the account is out of credits"),
+        404 => format!("{server} does not know the model \"{model}\" — choose another one in Settings → AI"),
+        429 => format!("{server} rate limit reached — wait a moment and try again"),
+        500..=599 => format!("{server} or the model's provider is unavailable — try again, or choose another model"),
+        _ => format!("{server} chat error"),
     };
     request_error(status, body, model, &format!("{what} (HTTP {status})"))
 }
 
-fn stream_stalled(idle: Duration) -> AppError {
+fn stream_stalled(idle: Duration, server: &str) -> AppError {
     AppError::AiError(format!(
-        "OpenRouter stopped responding ({}s without data)",
+        "{server} stopped responding ({}s without data)",
         idle.as_secs_f32()
     ))
 }
@@ -235,7 +253,9 @@ struct OpenRouterEmbeddingRequest {
     encoding_format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
-    provider: ProviderPreferences,
+    /// OpenRouter only; omitted for a plain OpenAI-compatible server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<ProviderPreferences>,
 }
 
 /// How a validated embedding model is made to return vectors the email index
@@ -381,6 +401,7 @@ pub struct OpenRouterClient {
     embedding_dimensions: Option<EmbeddingDimensions>,
     zero_data_retention: bool,
     base_url: String,
+    endpoint: Endpoint,
     stream_idle_timeout: Duration,
 }
 
@@ -399,8 +420,19 @@ impl OpenRouterClient {
             embedding_dimensions: None,
             zero_data_retention: false,
             base_url: OPENROUTER_BASE_URL.to_string(),
+            endpoint: Endpoint::OpenRouter,
             stream_idle_timeout: STREAM_IDLE_TIMEOUT,
         }
+    }
+
+    /// A client for a user-configured OpenAI-compatible server at `base_url`
+    /// (e.g. `http://localhost:1234/v1`). `api_key` may be empty. No
+    /// OpenRouter routing object or attribution headers are sent.
+    pub fn openai_compatible(base_url: &str, api_key: String, model: String, embedding_model: String) -> Self {
+        let mut client = Self::new(api_key, model, embedding_model);
+        client.base_url = base_url.trim().trim_end_matches('/').to_string();
+        client.endpoint = Endpoint::OpenAiCompatible;
+        client
     }
 
     /// Send requests to `base_url` (a mock server) instead of openrouter.ai.
@@ -408,6 +440,41 @@ impl OpenRouterClient {
     pub(crate) fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    /// The server this client talks to.
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
+    /// Name used in errors and logs, so a local server's failure is not
+    /// blamed on OpenRouter.
+    fn server_name(&self) -> &'static str {
+        match self.endpoint {
+            Endpoint::OpenRouter => "OpenRouter",
+            Endpoint::OpenAiCompatible => "The OpenAI-compatible server",
+        }
+    }
+
+    /// OpenRouter's data-policy object; `None` for other servers.
+    fn provider_preferences(&self) -> Option<ProviderPreferences> {
+        (self.endpoint == Endpoint::OpenRouter).then(|| ProviderPreferences::new(self.zero_data_retention))
+    }
+
+    /// Attach authentication (when there is a key) and, for OpenRouter only,
+    /// its attribution headers.
+    fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let request = if self.api_key.trim().is_empty() {
+            request
+        } else {
+            request.header("Authorization", format!("Bearer {}", self.api_key))
+        };
+        match self.endpoint {
+            Endpoint::OpenRouter => request
+                .header("HTTP-Referer", APP_URL)
+                .header("X-OpenRouter-Title", APP_NAME),
+            Endpoint::OpenAiCompatible => request,
+        }
     }
 
     /// Route only to providers with a zero-data-retention policy.
@@ -427,6 +494,15 @@ impl OpenRouterClient {
     /// [`is_openrouter_model_id`]) with what to do about it, before a request
     /// carrying mail content is sent.
     fn ensure_chat_model(&self) -> Result<()> {
+        if self.endpoint == Endpoint::OpenAiCompatible {
+            // Any id the server knows; an empty one is the only certain mistake.
+            if self.model.trim().is_empty() {
+                return Err(AppError::AiError(
+                    "No chat model selected — choose one in Settings → AI → OpenAI-compatible".to_string(),
+                ));
+            }
+            return Ok(());
+        }
         if is_openrouter_model_id(&self.model) {
             return Ok(());
         }
@@ -445,7 +521,7 @@ impl OpenRouterClient {
             temperature: options.temperature,
             response_format: response_format(options.json_shape.as_ref()),
             tools: None,
-            provider: ProviderPreferences::new(self.zero_data_retention),
+            provider: self.provider_preferences(),
         }
     }
 
@@ -460,7 +536,7 @@ impl OpenRouterClient {
             temperature: Some(CHAT_TEMPERATURE),
             response_format: None,
             tools: (!tools.is_empty()).then(|| tools.to_vec()),
-            provider: ProviderPreferences::new(self.zero_data_retention),
+            provider: self.provider_preferences(),
         }
     }
 
@@ -470,7 +546,7 @@ impl OpenRouterClient {
             input: text.to_string(),
             encoding_format: "float".to_string(),
             dimensions,
-            provider: ProviderPreferences::new(self.zero_data_retention),
+            provider: self.provider_preferences(),
         }
     }
 
@@ -485,11 +561,7 @@ impl OpenRouterClient {
         let request = self.embedding_request(text, dimensions);
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.post(&url))
             .header("Content-Type", "application/json")
             .timeout(GENERATION_TIMEOUT)
             .json(&request)
@@ -498,11 +570,12 @@ impl OpenRouterClient {
             .map_err(|e| {
                 EmbeddingFailure::other(if e.is_timeout() {
                     AppError::AiError(format!(
-                        "OpenRouter embedding timed out ({}s)",
+                        "{} embedding timed out ({}s)",
+                        self.server_name(),
                         GENERATION_TIMEOUT.as_secs()
                     ))
                 } else {
-                    AppError::AiError(format!("Failed to connect to OpenRouter embeddings: {}", e))
+                    AppError::AiError(format!("Failed to connect to {} embeddings: {}", self.server_name(), e))
                 })
             })?;
 
@@ -522,13 +595,17 @@ impl OpenRouterClient {
 
         let body: OpenRouterEmbeddingResponse = response.json().await.map_err(|e| {
             EmbeddingFailure::other(AppError::AiError(format!(
-                "Failed to parse OpenRouter embedding response: {}",
+                "Failed to parse {} embedding response: {}",
+                self.server_name(),
                 e
             )))
         })?;
 
         let embedding = body.data.first().map(|item| item.embedding.clone()).ok_or_else(|| {
-            EmbeddingFailure::other(AppError::AiError("OpenRouter returned no embedding vector".to_string()))
+            EmbeddingFailure::other(AppError::AiError(format!(
+                "{} returned no embedding vector",
+                self.server_name()
+            )))
         })?;
 
         Ok(EmbeddingResult {
@@ -611,23 +688,24 @@ impl OpenRouterClient {
         self.ensure_chat_model()?;
         let idle = self.stream_idle_timeout;
         let send = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.post(format!("{}/chat/completions", self.base_url)))
             .header("Content-Type", "application/json")
             .json(&self.stream_request(messages, tools))
             .send();
         let response = tokio::time::timeout(idle, send)
             .await
-            .map_err(|_| stream_stalled(idle))?
-            .map_err(|e| AppError::AiError(format!("Failed to connect to OpenRouter: {e}")))?;
+            .map_err(|_| stream_stalled(idle, self.server_name()))?
+            .map_err(|e| AppError::AiError(format!("Failed to connect to {}: {e}", self.server_name())))?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(stream_request_error(status, &error_text, &self.model));
+            return Err(stream_request_error(
+                status,
+                &error_text,
+                &self.model,
+                self.server_name(),
+            ));
         }
 
         let mut stream = response.bytes_stream();
@@ -636,10 +714,11 @@ impl OpenRouterClient {
         loop {
             let next = tokio::time::timeout(idle, stream.next())
                 .await
-                .map_err(|_| stream_stalled(idle))?;
+                .map_err(|_| stream_stalled(idle, self.server_name()))?;
             let (batch, ended) = match next {
                 Some(chunk) => {
-                    let bytes = chunk.map_err(|e| AppError::AiError(format!("OpenRouter stream read error: {e}")))?;
+                    let bytes = chunk
+                        .map_err(|e| AppError::AiError(format!("{} stream read error: {e}", self.server_name())))?;
                     (lines.push(&bytes), false)
                 }
                 None => (lines.finish().into_iter().collect(), true),
@@ -661,10 +740,10 @@ impl OpenRouterClient {
                 return if reply.finished() {
                     reply.finish()
                 } else {
-                    Err(AppError::AiError(
-                        "OpenRouter ended the reply before it was complete — the model's provider may have dropped the connection"
-                            .to_string(),
-                    ))
+                    Err(AppError::AiError(format!(
+                        "{} ended the reply before it was complete — the model's provider may have dropped the connection",
+                        self.server_name()
+                    )))
                 };
             }
         }
@@ -691,24 +770,23 @@ impl OpenRouterClient {
     async fn fetch_model_catalogue(&self) -> Result<Vec<OpenRouterModelInfo>> {
         let url = format!("{}/models", self.base_url);
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.get(&url))
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to fetch OpenRouter models: {}", e)))?;
+            .map_err(|e| AppError::AiError(format!("Failed to fetch {} models: {}", self.server_name(), e)))?;
 
         if !response.status().is_success() {
-            return Err(AppError::AiError("Failed to list OpenRouter models".to_string()));
+            return Err(AppError::AiError(format!(
+                "Failed to list {} models",
+                self.server_name()
+            )));
         }
 
         let body: OpenRouterModelsResponse = response
             .json()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter models: {}", e)))?;
+            .map_err(|e| AppError::AiError(format!("Failed to parse {} models: {}", self.server_name(), e)))?;
 
         Ok(body.data)
     }
@@ -716,11 +794,7 @@ impl OpenRouterClient {
     pub async fn list_embedding_models_from_api(&self) -> Result<Vec<ModelInfo>> {
         let url = format!("{}/embeddings/models", self.base_url);
         let response = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.get(&url))
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
@@ -765,7 +839,10 @@ impl OpenRouterClient {
 #[async_trait]
 impl AIProvider for OpenRouterClient {
     fn provider_type(&self) -> ProviderType {
-        ProviderType::OpenRouter
+        match self.endpoint {
+            Endpoint::OpenRouter => ProviderType::OpenRouter,
+            Endpoint::OpenAiCompatible => ProviderType::OpenAiCompatible,
+        }
     }
 
     /// The selected model's window from the catalogue. Asked for on demand
@@ -795,7 +872,11 @@ impl AIProvider for OpenRouterClient {
                 crate::services::logger::log(
                     "warn",
                     "ai",
-                    format!("OpenRouter: could not read the context window of {}: {e}", self.model),
+                    format!(
+                        "{}: could not read the context window of {}: {e}",
+                        self.server_name(),
+                        self.model
+                    ),
                 );
                 None
             }
@@ -808,11 +889,7 @@ impl AIProvider for OpenRouterClient {
 
     async fn is_available(&self) -> bool {
         let url = format!("{}/models", self.base_url);
-        self.client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+        self.authorized(self.client.get(&url))
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
@@ -831,11 +908,7 @@ impl AIProvider for OpenRouterClient {
         let request = self.chat_request(prompt, &options);
 
         let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("HTTP-Referer", APP_URL)
-            .header("X-OpenRouter-Title", APP_NAME)
+            .authorized(self.client.post(&url))
             .header("Content-Type", "application/json")
             .timeout(GENERATION_TIMEOUT)
             .json(&request)
@@ -844,24 +917,30 @@ impl AIProvider for OpenRouterClient {
             .map_err(|e| {
                 if e.is_timeout() {
                     AppError::AiError(format!(
-                        "OpenRouter generation timed out ({}s)",
+                        "{} generation timed out ({}s)",
+                        self.server_name(),
                         GENERATION_TIMEOUT.as_secs()
                     ))
                 } else {
-                    AppError::AiError(format!("Failed to connect to OpenRouter: {}", e))
+                    AppError::AiError(format!("Failed to connect to {}: {}", self.server_name(), e))
                 }
             })?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(request_error(status, &error_text, &self.model, "OpenRouter error"));
+            return Err(request_error(
+                status,
+                &error_text,
+                &self.model,
+                &format!("{} error", self.server_name()),
+            ));
         }
 
         let result: OpenRouterChatResponse = response
             .json()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter response: {}", e)))?;
+            .map_err(|e| AppError::AiError(format!("Failed to parse {} response: {}", self.server_name(), e)))?;
 
         let text = result
             .choices
@@ -1070,6 +1149,73 @@ mod data_policy_tests {
         );
     }
 
+    fn compatible() -> OpenRouterClient {
+        OpenRouterClient::openai_compatible(
+            "http://127.0.0.1:8317/v1/",
+            String::new(),
+            "local-model".into(),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn an_openai_compatible_server_gets_no_openrouter_routing_object() {
+        // A plain OpenAI-compatible server does not know `provider` and may
+        // reject the request over it.
+        let body = serde_json::to_value(compatible().chat_request("hi", &CompletionOptions::default())).unwrap();
+        assert!(body.get("provider").is_none(), "{body}");
+        let body = serde_json::to_value(compatible().embedding_request("hi", None)).unwrap();
+        assert!(body.get("provider").is_none(), "{body}");
+        let body = serde_json::to_value(compatible().stream_request(&[], &[])).unwrap();
+        assert!(body.get("provider").is_none(), "{body}");
+    }
+
+    #[test]
+    fn an_openai_compatible_server_takes_any_model_id_but_not_none() {
+        assert!(
+            compatible().ensure_chat_model().is_ok(),
+            "ids are whatever the server lists"
+        );
+        let none =
+            OpenRouterClient::openai_compatible("http://localhost:1/v1", String::new(), "  ".into(), String::new());
+        assert!(none.ensure_chat_model().is_err());
+        // OpenRouter keeps its vendor/model rule.
+        assert!(client(false).ensure_chat_model().is_ok());
+        let bad = OpenRouterClient::new("k".into(), "llama3".into(), String::new());
+        assert!(bad.ensure_chat_model().is_err());
+    }
+
+    #[test]
+    fn an_openai_compatible_client_reports_its_own_type_and_trims_the_url() {
+        let c = compatible();
+        assert_eq!(c.provider_type(), ProviderType::OpenAiCompatible);
+        assert_eq!(c.endpoint(), &Endpoint::OpenAiCompatible);
+        assert_eq!(c.base_url, "http://127.0.0.1:8317/v1");
+        assert_eq!(client(false).provider_type(), ProviderType::OpenRouter);
+    }
+
+    #[test]
+    fn stream_errors_name_the_server_they_came_from() {
+        let msg = |e: AppError| match e {
+            AppError::AiError(m) => m,
+            other => panic!("{other:?}"),
+        };
+        let local = msg(stream_request_error(401, "{}", "m", "The OpenAI-compatible server"));
+        assert!(
+            local.starts_with("The OpenAI-compatible server refused the request: check the API key"),
+            "{local}"
+        );
+        assert!(!local.contains("OpenRouter"));
+        let unknown = msg(stream_request_error(404, "{}", "gpt-x", "The OpenAI-compatible server"));
+        assert!(unknown.contains("does not know the model \"gpt-x\""), "{unknown}");
+        // OpenRouter's data-policy 404 keeps its own meaning.
+        let policy = r#"{"error":{"message":"No endpoints found matching your data policy"}}"#;
+        assert!(matches!(
+            stream_request_error(404, policy, "vendor/model", "OpenRouter"),
+            AppError::AiDataPolicy { .. }
+        ));
+    }
+
     #[test]
     fn a_data_policy_404_names_the_blocked_model() {
         let body = r#"{"error":{"message":"No endpoints found matching your data policy (Free model training). Configure: https://openrouter.ai/settings/privacy","code":404}}"#;
@@ -1152,6 +1298,80 @@ mod chat_stream_tests {
 
     fn client(server: &MockServer) -> OpenRouterClient {
         OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into()).with_base_url(server.uri())
+    }
+
+    /// What an OpenAI-compatible server received: only the parts that differ
+    /// from OpenRouter (headers, body) are inspected.
+    async fn received(server: &MockServer) -> (reqwest::header::HeaderMap, serde_json::Value) {
+        let requests = server.received_requests().await.expect("recording enabled");
+        let last = requests.last().expect("a request was sent");
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in last.headers.iter() {
+            if let (Ok(n), Ok(v)) = (
+                reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+                reqwest::header::HeaderValue::from_bytes(value.as_bytes()),
+            ) {
+                headers.insert(n, v);
+            }
+        }
+        (headers, serde_json::from_slice(&last.body).unwrap_or_default())
+    }
+
+    #[tokio::test]
+    async fn an_openai_compatible_server_streams_a_reply_without_openrouter_headers() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"Bon"}}]}"#,
+            r#"{"choices":[{"delta":{"content":"jour"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let c = OpenRouterClient::openai_compatible(&server.uri(), String::new(), "claude-haiku".into(), String::new());
+        let (tokens, on_token) = recording(|_| true);
+        let result = c.chat_stream(vec![user("Salut")], on_token).await.expect("streamed");
+        assert_eq!(result.content, "Bonjour");
+        assert_eq!(seen(&tokens).concat(), "Bonjour");
+
+        let (headers, body) = received(&server).await;
+        assert!(
+            headers.get("authorization").is_none(),
+            "no key, no Authorization header"
+        );
+        assert!(headers.get("x-openrouter-title").is_none());
+        assert!(headers.get("http-referer").is_none());
+        assert_eq!(body["model"], "claude-haiku");
+        assert!(body.get("provider").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_openai_compatible_server_gets_the_key_when_one_is_set() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let c = OpenRouterClient::openai_compatible(&server.uri(), "secret".into(), "m".into(), String::new());
+        let (_tokens, on_token) = recording(|_| true);
+        c.chat_stream(vec![user("x")], on_token).await.expect("streamed");
+        let (headers, _) = received(&server).await;
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer secret");
+    }
+
+    #[tokio::test]
+    async fn openrouter_still_sends_its_headers_and_routing_object() {
+        let server = server_replying(sse(&[
+            r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ]))
+        .await;
+        let (_tokens, on_token) = recording(|_| true);
+        client(&server)
+            .chat_stream(vec![user("x")], on_token)
+            .await
+            .expect("streamed");
+        let (headers, body) = received(&server).await;
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer key");
+        assert!(headers.get("x-openrouter-title").is_some());
+        assert_eq!(body["provider"], serde_json::json!({ "data_collection": "deny" }));
     }
 
     async fn server_replying(body: String) -> MockServer {

@@ -83,6 +83,8 @@
     "providerOllamaDesc": "Local Ollama server",
     "providerOpenRouterLabel": "OpenRouter",
     "providerOpenRouterDesc": "Cloud API (paid)",
+    "providerOpenAiCompatibleLabel": "OpenAI-compatible",
+    "providerOpenAiCompatibleDesc": "Your own server (LM Studio, vLLM, a proxy…)",
     "routingMode": "Chat routing mode",
     "routingModeHelp": "How the chat decides between RAG retrieval and direct tool calls.",
     "routingAlwaysRag": "Always RAG first (default)",
@@ -183,6 +185,15 @@
     "embeddingCheckFailed": "Nothing was saved — the Embeddings model cannot be used: {{error}}",
     "embeddingZdrBlocked": "Nothing was saved — no provider for the Embeddings model {{model}} meets the zero-data-retention setting. Turn off “Zero data retention only” in Settings → AI → OpenRouter, or use no Embeddings model (keyword-only search).",
     "embeddingListFailed": "Failed to load the OpenRouter Embeddings models: {{error}}"
+  },
+  "openAiCompatible": {
+    "baseUrl": "Server URL",
+    "baseUrlHelp": "The OpenAI-compatible endpoint, usually ending in /v1. Plain http is only accepted for this machine or the local network.",
+    "baseUrlRequired": "Enter the server URL before saving.",
+    "apiKeyOptional": "(optional)",
+    "chatModelPlaceholder": "Model id as your server lists it",
+    "chatModelRequired": "Enter the model id your server uses before saving.",
+    "privacyNotice": "Email content is sent to this server for chat and drafts. It is used for chat only: semantic search uses keywords."
   },
   "confirmReindex": {
     "title": "Regenerate all Embeddings?",

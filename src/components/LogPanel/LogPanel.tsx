@@ -71,12 +71,13 @@ function SourceBadge({ source }: { source: LogSource }) {
   );
 }
 
-type Provider = 'llamacpp' | 'ollama' | 'openrouter';
+type Provider = 'llamacpp' | 'ollama' | 'openrouter' | 'openai_compatible';
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   llamacpp: 'Embedded',
   ollama: 'Ollama',
   openrouter: 'OpenRouter',
+  openai_compatible: 'OpenAI-compatible',
 };
 
 export function ModelSelector() {
@@ -102,7 +103,8 @@ export function ModelSelector() {
       const catalog = await api.listCatalogModels().catch(() => [] as CatalogModel[]);
       return catalog.filter((m) => m.kind === 'chat' && m.isLocal).map((m) => m.id);
     }
-    // openrouter: no fixed list — model is a free-form string configured in AI Settings.
+    // openrouter / openai_compatible: no fixed list — the model is a free-form
+    // string configured in AI Settings.
     return [];
   };
 
@@ -175,8 +177,8 @@ export function ModelSelector() {
         {PROVIDER_LABELS[provider]}
       </span>
 
-      {/* Model selector — hidden for openrouter (free-form model configured in AI Settings). */}
-      {provider !== 'openrouter' && models.length > 0 && (
+      {/* Model selector — hidden for remote providers (free-form model configured in AI Settings). */}
+      {provider !== 'openrouter' && provider !== 'openai_compatible' && models.length > 0 && (
         <Select
           value={currentModel}
           onChange={(value) => void handleModelChange(value)}

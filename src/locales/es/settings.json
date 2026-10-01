@@ -83,6 +83,8 @@
     "providerOllamaDesc": "Servidor Ollama local",
     "providerOpenRouterLabel": "OpenRouter",
     "providerOpenRouterDesc": "API en la nube (de pago)",
+    "providerOpenAiCompatibleLabel": "Compatible con OpenAI",
+    "providerOpenAiCompatibleDesc": "Tu propio servidor (LM Studio, vLLM, un proxy…)",
     "routingMode": "Modo de enrutamiento del chat",
     "routingModeHelp": "Cómo decide el chat entre la recuperación RAG y las llamadas directas a herramientas.",
     "routingAlwaysRag": "Siempre RAG primero (por defecto)",
@@ -183,6 +185,15 @@
     "embeddingCheckFailed": "No se ha guardado nada: el modelo de Embeddings no se puede usar: {{error}}",
     "embeddingZdrBlocked": "No se ha guardado nada: ningún proveedor del modelo de Embeddings {{model}} cumple el ajuste de retención cero. Desactiva «Solo retención cero» en Ajustes → IA → OpenRouter, o no uses ningún modelo de Embeddings (solo búsqueda por palabras clave).",
     "embeddingListFailed": "No se pudieron cargar los modelos de Embeddings de OpenRouter: {{error}}"
+  },
+  "openAiCompatible": {
+    "baseUrl": "URL del servidor",
+    "baseUrlHelp": "El punto de acceso compatible con OpenAI, normalmente termina en /v1. El http simple solo se acepta para este equipo o la red local.",
+    "baseUrlRequired": "Introduce la URL del servidor antes de guardar.",
+    "apiKeyOptional": "(opcional)",
+    "chatModelPlaceholder": "Id del modelo tal como lo lista tu servidor",
+    "chatModelRequired": "Introduce el id del modelo que usa tu servidor antes de guardar.",
+    "privacyNotice": "El contenido de los correos se envía a este servidor para el chat y los borradores. Solo se usa para el chat: la búsqueda semántica usa palabras clave."
   },
   "confirmReindex": {
     "title": "¿Regenerar todos los Embeddings?",

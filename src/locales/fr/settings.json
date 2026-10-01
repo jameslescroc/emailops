@@ -83,6 +83,8 @@
     "providerOllamaDesc": "Serveur Ollama local",
     "providerOpenRouterLabel": "OpenRouter",
     "providerOpenRouterDesc": "API cloud (payante)",
+    "providerOpenAiCompatibleLabel": "Compatible OpenAI",
+    "providerOpenAiCompatibleDesc": "Votre serveur (LM Studio, vLLM, un proxy…)",
     "routingMode": "Mode de routage du chat",
     "routingModeHelp": "Comment le chat choisit entre la récupération RAG et les appels directs d'outils.",
     "routingAlwaysRag": "Toujours RAG en premier (par défaut)",
@@ -183,6 +185,15 @@
     "embeddingCheckFailed": "Rien n'a été enregistré : le modèle d'Embeddings ne peut pas être utilisé : {{error}}",
     "embeddingZdrBlocked": "Rien n'a été enregistré : aucun fournisseur du modèle d'Embeddings {{model}} ne respecte le réglage de rétention zéro. Désactivez « Rétention zéro uniquement » dans Paramètres → IA → OpenRouter, ou n'utilisez aucun modèle d'Embeddings (recherche par mots-clés uniquement).",
     "embeddingListFailed": "Échec du chargement des modèles d'Embeddings d'OpenRouter : {{error}}"
+  },
+  "openAiCompatible": {
+    "baseUrl": "Adresse du serveur",
+    "baseUrlHelp": "Le point d'accès compatible OpenAI, se terminant souvent par /v1. Le http simple n'est accepté que pour cette machine ou le réseau local.",
+    "baseUrlRequired": "Saisissez l'adresse du serveur avant d'enregistrer.",
+    "apiKeyOptional": "(facultatif)",
+    "chatModelPlaceholder": "Identifiant du modèle tel que votre serveur le liste",
+    "chatModelRequired": "Saisissez l'identifiant du modèle utilisé par votre serveur avant d'enregistrer.",
+    "privacyNotice": "Le contenu des e-mails est envoyé à ce serveur pour le chat et les brouillons. Il sert uniquement au chat : la recherche sémantique utilise les mots-clés."
   },
   "confirmReindex": {
     "title": "Régénérer tous les Embeddings ?",

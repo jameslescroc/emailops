@@ -18,6 +18,11 @@ fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
 pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Value, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
     let has_api_key = services::ai::AiService::has_openrouter_api_key(&state.db)?;
+    let openai_compatible_base_url = state
+        .db
+        .get_preference(services::ai::OPENAI_COMPATIBLE_BASE_URL_PREF)?
+        .unwrap_or_default();
+    let openai_compatible_has_api_key = AiService::has_openai_compatible_api_key(&state.db)?;
     let validated_embedding_model = AiService::validated_openrouter_embedding_model(&state.db)?;
     let remembered: serde_json::Map<String, serde_json::Value> = AiService::remembered_models(&state.db, &config)?
         .into_iter()
@@ -38,6 +43,8 @@ pub async fn get_ai_config(state: State<'_, AppState>) -> Result<serde_json::Val
         "monthlyBudgetUsd": config.monthly_budget_usd,
         "periodStart": config.period_start,
         "hasApiKey": has_api_key,
+        "openAiCompatibleBaseUrl": openai_compatible_base_url,
+        "openAiCompatibleHasApiKey": openai_compatible_has_api_key,
         "thinkingEnabled": config.thinking_enabled,
         "zeroDataRetention": config.zero_data_retention,
     }))
@@ -91,7 +98,23 @@ pub async fn set_ai_config(
     monthly_budget_usd: f64,
     thinking_enabled: Option<bool>,
     zero_data_retention: Option<bool>,
+    base_url: Option<String>,
 ) -> Result<(), AppError> {
+    // The OpenAI-compatible server's address is part of its config: refuse a
+    // bad one before anything is saved, so a half-saved provider never exists.
+    if provider == services::ai::OPENAI_COMPATIBLE {
+        let raw = match &base_url {
+            Some(url) => url.clone(),
+            None => state
+                .db
+                .get_preference(services::ai::OPENAI_COMPATIBLE_BASE_URL_PREF)?
+                .unwrap_or_default(),
+        };
+        let url = services::ai::normalize_ai_base_url(&raw)?;
+        state
+            .db
+            .set_preference(services::ai::OPENAI_COMPATIBLE_BASE_URL_PREF, &url)?;
+    }
     // If no API key is being written, keychain is not touched — safe to call directly.
     let result = if api_key.is_none() {
         services::ai::AiService::save_config(
@@ -183,7 +206,11 @@ pub async fn list_ai_embedding_models(
     provider: Option<String>,
 ) -> Result<Vec<serde_json::Value>, AppError> {
     let config = services::ai::AiService::get_config(&state.db)?;
-
+    // An OpenAI-compatible server is used for chat only (no embeddings), so
+    // there is nothing to list here.
+    if provider.as_deref().unwrap_or(&config.provider) == services::ai::OPENAI_COMPATIBLE {
+        return Ok(Vec::new());
+    }
     if provider.as_deref().unwrap_or(&config.provider) == "openrouter" {
         let key = AiService::load_openrouter_api_key(&state.db)?;
         let client =
@@ -317,10 +344,27 @@ pub async fn test_ai_provider(
     provider: String,
     model: String,
     api_key: Option<String>,
+    base_url: Option<String>,
 ) -> Result<String, AppError> {
     emit_log(&app, "info", "ai", &format!("Testing {provider} ({model})..."));
 
-    let prov: Arc<dyn crate::ai::provider::AIProvider> = if provider == "openrouter" {
+    let prov: Arc<dyn crate::ai::provider::AIProvider> = if provider == services::ai::OPENAI_COMPATIBLE {
+        // Values typed in Settings but not saved yet win over the stored ones.
+        let url = match base_url {
+            Some(url) => services::ai::normalize_ai_base_url(&url)?,
+            None => AiService::load_openai_compatible_base_url(&state.db)?,
+        };
+        let key = match api_key {
+            Some(key) => key,
+            None => AiService::load_openai_compatible_api_key(&state.db)?,
+        };
+        Arc::new(crate::ai::openrouter::OpenRouterClient::openai_compatible(
+            &url,
+            key,
+            model,
+            String::new(),
+        ))
+    } else if provider == "openrouter" {
         let key = match api_key {
             Some(key) if !key.is_empty() => key,
             _ => AiService::load_openrouter_api_key(&state.db)?,

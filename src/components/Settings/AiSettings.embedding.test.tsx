@@ -237,6 +237,8 @@ describe('AiSettings — embedding model', () => {
       0,
       false,
       false,
+      // The OpenAI-compatible server URL is not sent for OpenRouter.
+      undefined,
     );
     expect(api.validateOpenRouterEmbeddingModel.mock.invocationCallOrder[0]).toBeLessThan(
       api.setAiConfig.mock.invocationCallOrder[0],

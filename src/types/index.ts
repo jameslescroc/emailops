@@ -329,7 +329,7 @@ export interface Attachment {
 }
 
 export interface AiConfig {
-  provider: 'ollama' | 'openrouter' | 'llamacpp';
+  provider: 'ollama' | 'openrouter' | 'llamacpp' | 'openai_compatible';
   model: string;
   embeddingModel: string;
   /** The OpenRouter embedding model that passed the dimension check, if any. */
@@ -343,6 +343,10 @@ export interface AiConfig {
   hasApiKey: boolean;
   thinkingEnabled: boolean;
   zeroDataRetention: boolean;
+  /** Base URL of the OpenAI-compatible server ('' when not set up). */
+  openAiCompatibleBaseUrl: string;
+  /** Whether a key is saved for the OpenAI-compatible server (optional). */
+  openAiCompatibleHasApiKey: boolean;
 }
 
 /** A kind of AI background work that uses the configured provider
