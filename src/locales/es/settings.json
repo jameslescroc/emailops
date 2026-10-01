@@ -198,7 +198,10 @@
     "embeddingLocalOption": "{{name}} — integrado, en este equipo",
     "embeddingOpenRouterOption": "OpenRouter: {{name}}",
     "embeddingLocalUnavailable": "Esta versión no puede ejecutar el modelo integrado. Elige un modelo de OpenRouter o ninguno.",
-    "embeddingNeedsOpenRouterKey": "Los embeddings de OpenRouter usan tu clave de OpenRouter: guarda una antes en la pestaña OpenRouter."
+    "embeddingNeedsOpenRouterKey": "Introduce arriba tu clave de OpenRouter para usar un modelo de embeddings de OpenRouter.",
+    "openRouterApiKey": "Clave API de OpenRouter (para los embeddings de OpenRouter)",
+    "openRouterApiKeyHelp": "Solo se usa si eliges un modelo de embeddings de OpenRouter. Se guarda aparte de la clave del servidor; es la misma clave que en la pestaña OpenRouter.",
+    "modelListFailed": "No se pudieron cargar los modelos del servidor ({{error}}). Aún puedes escribir el id de un modelo."
   },
   "confirmReindex": {
     "title": "¿Regenerar todos los Embeddings?",

@@ -198,7 +198,10 @@
     "embeddingLocalOption": "{{name}} — in-app, on this computer",
     "embeddingOpenRouterOption": "OpenRouter: {{name}}",
     "embeddingLocalUnavailable": "This build cannot run the in-app model. Choose an OpenRouter model or none.",
-    "embeddingNeedsOpenRouterKey": "OpenRouter embeddings use your OpenRouter key: save one on the OpenRouter tab first."
+    "embeddingNeedsOpenRouterKey": "Enter your OpenRouter key above to use an OpenRouter embedding model.",
+    "openRouterApiKey": "OpenRouter API key (for OpenRouter embeddings)",
+    "openRouterApiKeyHelp": "Only used if you pick an OpenRouter embedding model. Saved separately from the server's key; it is the same key as on the OpenRouter tab.",
+    "modelListFailed": "Could not load the server's models ({{error}}). You can still type a model id."
   },
   "confirmReindex": {
     "title": "Regenerate all Embeddings?",

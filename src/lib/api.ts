@@ -924,8 +924,12 @@ export async function setAiConfig(
   zeroDataRetention?: boolean,
   // OpenAI-compatible server address; omitted keeps the stored one.
   baseUrl?: string,
+  // OpenRouter key typed on the OpenAI-compatible tab (for its embeddings).
+  openRouterApiKey?: string | null,
 ): Promise<void> {
   return invoke('set_ai_config', {
+    // Tauri maps `openrouter_api_key` to `openrouterApiKey`.
+    openrouterApiKey: openRouterApiKey,
     provider,
     model,
     embeddingModel,
@@ -943,6 +947,11 @@ export async function getAiUsage(): Promise<AiUsageSummary> {
 
 export async function resetAiUsage(): Promise<void> {
   return invoke('reset_ai_usage');
+}
+
+/** Chat model ids an OpenAI-compatible server offers (`GET {baseUrl}/models`). */
+export async function listOpenAiCompatibleModels(baseUrl: string, apiKey?: string | null): Promise<string[]> {
+  return invoke('list_openai_compatible_models', { baseUrl, apiKey });
 }
 
 export async function listAiModels(): Promise<AiModelInfo[]> {

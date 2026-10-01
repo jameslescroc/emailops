@@ -99,10 +99,20 @@ pub async fn set_ai_config(
     thinking_enabled: Option<bool>,
     zero_data_retention: Option<bool>,
     base_url: Option<String>,
+    openrouter_api_key: Option<String>,
 ) -> Result<(), AppError> {
     // The OpenAI-compatible server's address is part of its config: refuse a
     // bad one before anything is saved, so a half-saved provider never exists.
     if provider == services::ai::OPENAI_COMPATIBLE {
+        // Server mode can embed with OpenRouter: its key, typed on this tab,
+        // goes to OpenRouter's slot — never the server's.
+        if let Some(key) = openrouter_api_key.as_deref().filter(|k| !k.is_empty()) {
+            let db = state.db.clone();
+            let key = key.to_string();
+            tauri::async_runtime::spawn_blocking(move || AiService::store_openrouter_api_key(&db, &key))
+                .await
+                .map_err(|e| AppError::AiError(format!("Saving the OpenRouter key failed: {e}")))??;
+        }
         let raw = match &base_url {
             Some(url) => url.clone(),
             None => state
@@ -176,6 +186,31 @@ pub async fn get_ai_usage(state: State<'_, AppState>) -> Result<AiUsageSummary, 
 #[tauri::command]
 pub async fn reset_ai_usage(state: State<'_, AppState>) -> Result<(), AppError> {
     AiService::reset_usage_period(&state.db)
+}
+
+/// The chat models an OpenAI-compatible server offers (`GET {base_url}/models`).
+/// `base_url` and `api_key` are the values typed in Settings, which may not
+/// be saved yet; a missing key falls back to the saved one.
+#[tauri::command]
+pub async fn list_openai_compatible_models(
+    state: State<'_, AppState>,
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    let url = services::ai::normalize_ai_base_url(&base_url)?;
+    let key = match api_key.filter(|k| !k.is_empty()) {
+        Some(key) => key,
+        None => AiService::load_openai_compatible_api_key(&state.db)?,
+    };
+    let client = crate::ai::openrouter::OpenRouterClient::openai_compatible(&url, key, String::new(), String::new());
+    let mut ids: Vec<String> = crate::ai::provider::AIProvider::list_models(&client)
+        .await?
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 #[tauri::command]

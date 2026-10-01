@@ -1,5 +1,7 @@
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
+import * as api from '@/lib/api';
 import type { AiModelInfo, CatalogModel } from '@/types';
 import { MIN_CONTEXT_BUDGET } from './helpers';
 import { recommendedEmbeddingOptions } from './openRouterEmbeddingOptions';
@@ -12,6 +14,9 @@ interface OpenRouterPanelProps {
   setConfig: (next: AiConfigState) => void;
   apiKey: string;
   setApiKey: (key: string) => void;
+  /** Server mode: OpenRouter key typed for OpenRouter embeddings (not saved yet). */
+  openRouterApiKey?: string;
+  setOpenRouterApiKey?: (key: string) => void;
   /** Prompt budget (tokens) for remote models, `chat.remote_n_ctx_budget`. */
   contextBudget: number;
   onContextBudgetChange: (tokens: number) => void;
@@ -57,6 +62,8 @@ export function OpenRouterPanel({
   setConfig,
   apiKey,
   setApiKey,
+  openRouterApiKey = '',
+  setOpenRouterApiKey,
   contextBudget,
   onContextBudgetChange,
   embeddingModels,
@@ -66,6 +73,34 @@ export function OpenRouterPanel({
 }: OpenRouterPanelProps) {
   const { t } = useTranslation(['common', 'settings']);
   const custom = config.provider === 'openai_compatible';
+  // Server mode: the server's models, fetched when the chat model field is
+  // focused, for the address and key currently typed.
+  const [serverModels, setServerModels] = useState<string[]>([]);
+  const [modelListOpen, setModelListOpen] = useState(false);
+  const [modelListError, setModelListError] = useState<string | null>(null);
+  const fetchedFor = useRef('');
+  const loadServerModels = () => {
+    if (!custom) return;
+    setModelListOpen(true);
+    const target = `${config.baseUrl.trim()}\n${apiKey}`;
+    if (config.baseUrl.trim() === '' || fetchedFor.current === target) return;
+    fetchedFor.current = target;
+    setModelListError(null);
+    api
+      .listOpenAiCompatibleModels(config.baseUrl.trim(), apiKey || null)
+      .then(setServerModels)
+      .catch((err) => {
+        fetchedFor.current = '';
+        setServerModels([]);
+        setModelListError(String(err));
+      });
+  };
+  const typedModel = config.model.trim().toLowerCase();
+  // Every model while the field still holds a listed id (so the whole list
+  // shows on focus); otherwise those matching what is typed.
+  const shownModels = serverModels.includes(config.model)
+    ? serverModels
+    : serverModels.filter((id) => id.toLowerCase().includes(typedModel));
   // Recommended models lead the list (they are offered before the catalogue
   // has loaded too); the rest of the catalogue follows, each model once.
   const { none, recommended } = recommendedEmbeddingOptions(t);
@@ -131,16 +166,58 @@ export function OpenRouterPanel({
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.chatModel')}</label>
-        <input
-          type="text"
-          value={config.model}
-          onChange={(e) => setConfig({ ...config, model: e.target.value })}
-          placeholder={
-            custom ? t('settings:openAiCompatible.chatModelPlaceholder') : t('settings:openRouter.chatModelPlaceholder')
-          }
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
-        />
+        <label htmlFor="ai-chat-model" className="block text-sm font-medium text-gray-300 mb-1">
+          {t('settings:ai.chatModel')}
+        </label>
+        <div className="relative">
+          <input
+            id="ai-chat-model"
+            type="text"
+            value={config.model}
+            onChange={(e) => setConfig({ ...config, model: e.target.value })}
+            onFocus={loadServerModels}
+            // Late enough for a click on the list to land first.
+            onBlur={() => setTimeout(() => setModelListOpen(false), 150)}
+            placeholder={
+              custom
+                ? t('settings:openAiCompatible.chatModelPlaceholder')
+                : t('settings:openRouter.chatModelPlaceholder')
+            }
+            autoComplete="off"
+            spellCheck={false}
+            className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+          />
+          {custom && modelListOpen && shownModels.length > 0 && (
+            <div
+              id="ai-chat-model-list"
+              className="absolute z-20 mt-1 w-full max-h-60 overflow-auto bg-[#2a2a2a] border border-gray-600 rounded shadow-lg"
+            >
+              {shownModels.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={id === config.model}
+                  // mousedown, not click: it fires before the input's blur.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setConfig({ ...config, model: id });
+                    setModelListOpen(false);
+                  }}
+                  className={`block w-full text-left px-3 py-1.5 text-sm font-mono hover:bg-primary-600/40 ${
+                    id === config.model ? 'text-primary-300' : 'text-gray-200'
+                  }`}
+                >
+                  {id}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {custom && modelListError && (
+          <p className="text-xs text-amber-400 mt-1">
+            {t('settings:openAiCompatible.modelListFailed', { error: modelListError })}
+          </p>
+        )}
       </div>
       <div>
         <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
@@ -159,17 +236,33 @@ export function OpenRouterPanel({
         {embedsWithOpenRouter && (
           <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNotice')}</p>
         )}
-        {(!custom || embedsWithOpenRouter) && !config.hasApiKey && (
-          <p className="text-xs text-gray-500 mt-1">
-            {custom
-              ? t('settings:openAiCompatible.embeddingNeedsOpenRouterKey')
-              : t('settings:openRouter.embeddingNeedsKey')}
-          </p>
+        {!custom && !config.hasApiKey && (
+          <p className="text-xs text-gray-500 mt-1">{t('settings:openRouter.embeddingNeedsKey')}</p>
         )}
         {embeddingNeedsCheck && (
           <p className="text-xs text-amber-400 mt-1">{t('settings:openRouter.embeddingNeedsCheck')}</p>
         )}
       </div>
+      {custom && (
+        <div>
+          <label htmlFor="ai-openrouter-key" className="block text-sm font-medium text-gray-300 mb-1">
+            {t('settings:openAiCompatible.openRouterApiKey')}
+            {config.hasApiKey && <span className="text-gray-500 font-normal"> {t('settings:ai.apiKeySaved')}</span>}
+          </label>
+          <input
+            id="ai-openrouter-key"
+            type="password"
+            value={openRouterApiKey}
+            onChange={(e) => setOpenRouterApiKey?.(e.target.value)}
+            autoComplete="off"
+            className={INPUT_CLASS}
+          />
+          <p className="text-xs text-gray-500 mt-1">{t('settings:openAiCompatible.openRouterApiKeyHelp')}</p>
+          {embedsWithOpenRouter && !config.hasApiKey && openRouterApiKey === '' && (
+            <p className="text-xs text-amber-400 mt-1">{t('settings:openAiCompatible.embeddingNeedsOpenRouterKey')}</p>
+          )}
+        </div>
+      )}
       {!custom && (
         <>
           <div>

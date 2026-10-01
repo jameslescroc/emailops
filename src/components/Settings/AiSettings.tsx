@@ -59,7 +59,12 @@ export function AiSettings() {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaEmbedModels, setOllamaEmbedModels] = useState<string[]>([]);
   const [openRouterEmbedModels, setOpenRouterEmbedModels] = useState<AiModelInfo[]>([]);
-  const [apiKey, setApiKey] = useState('');
+  // Typed, not-yet-saved keys — one per destination, so a key typed on one
+  // tab is never saved as the other provider's.
+  const [apiKeys, setApiKeys] = useState({ openrouter: '', server: '', serverOpenRouter: '' });
+  const apiKey = config?.provider === 'openai_compatible' ? apiKeys.server : apiKeys.openrouter;
+  const setApiKey = (key: string) =>
+    setApiKeys((keys) => ({ ...keys, [config?.provider === 'openai_compatible' ? 'server' : 'openrouter']: key }));
   const [routingMode, setRoutingMode] = useState<RoutingMode>(DEFAULT_ROUTING_MODE);
   const [aiOutputLanguage, setAiOutputLanguage] = useState<string>('Spanish');
   const { enabled: helpDocsEnabled, setEnabled: setHelpDocsEnabled } = useHelpDocsEnabledStore();
@@ -494,7 +499,7 @@ export function AiSettings() {
         try {
           // In server mode the typed key is the server's, never sent to
           // OpenRouter: the backend uses the saved OpenRouter key instead.
-          const openRouterKey = config.provider === 'openrouter' ? key : null;
+          const openRouterKey = config.provider === 'openrouter' ? key : apiKeys.serverOpenRouter || null;
           await api.validateOpenRouterEmbeddingModel(config.embeddingModel, openRouterKey, config.zeroDataRetention);
         } catch (err) {
           setError(
@@ -515,6 +520,7 @@ export function AiSettings() {
         config.thinkingEnabled,
         config.zeroDataRetention,
         config.provider === 'openai_compatible' ? config.baseUrl.trim() : undefined,
+        config.provider === 'openai_compatible' && apiKeys.serverOpenRouter ? apiKeys.serverOpenRouter : undefined,
       );
       savedEmbedModelRef.current = config.embeddingModel;
 
@@ -593,7 +599,7 @@ export function AiSettings() {
 
       setSuccess(embedChanged ? t('settings:ai.saveSuccessReindex') : t('settings:ai.saveSuccess'));
       addLog('success', 'ai', t('settings:ai.backendSet', { provider: config.provider, model: config.model }));
-      if (apiKey) setApiKey('');
+      setApiKeys({ openrouter: '', server: '', serverOpenRouter: '' });
       void loadAll();
     } catch (err) {
       setError(t('settings:ai.saveFailed', { error: errorText(err) }));
@@ -776,6 +782,8 @@ export function AiSettings() {
                 setConfig={setConfig}
                 apiKey={apiKey}
                 setApiKey={setApiKey}
+                openRouterApiKey={apiKeys.serverOpenRouter}
+                setOpenRouterApiKey={(key) => setApiKeys((keys) => ({ ...keys, serverOpenRouter: key }))}
                 contextBudget={contextBudget}
                 onContextBudgetChange={setContextBudget}
                 embeddingModels={openRouterEmbedModels}

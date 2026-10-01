@@ -196,7 +196,11 @@ struct OpenRouterEmbeddingsResponse {
 #[derive(Debug, Deserialize)]
 struct OpenRouterModelInfo {
     id: String,
+    #[serde(default)]
     name: Option<String>,
+    /// OpenRouter prices every model; a plain OpenAI-compatible server
+    /// (`/v1/models` with only `id`) does not.
+    #[serde(default)]
     pricing: serde_json::Value,
     /// Maximum context length of the model, in tokens.
     #[serde(default)]
@@ -1827,7 +1831,7 @@ mod chat_stream_tests {
 #[cfg(test)]
 mod context_window_tests {
     use super::*;
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn models(json: serde_json::Value) -> Vec<OpenRouterModelInfo> {
@@ -1884,6 +1888,31 @@ mod context_window_tests {
             OpenRouterClient::new("key".into(), "vendor/big".into(), "vendor/embed".into()).with_base_url(server.uri());
         assert_eq!(client.context_window(), None, "not known before it is asked for");
         assert_eq!(client.resolve_context_window().await, Some(128_000));
+    }
+
+    #[tokio::test]
+    async fn an_openai_compatible_server_lists_models_that_carry_only_an_id() {
+        // CLIProxyAPI, LM Studio, vLLM…: `/v1/models` has no name or pricing.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer 123456"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    { "id": "claude-haiku", "object": "model", "owned_by": "anthropic" },
+                    { "id": "claude-sonnet", "object": "model" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let client = OpenRouterClient::openai_compatible(
+            &format!("{}/v1", server.uri()),
+            "123456".into(),
+            String::new(),
+            String::new(),
+        );
+        let ids: Vec<String> = client.list_models().await.unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["claude-haiku", "claude-sonnet"]);
     }
 
     #[tokio::test]

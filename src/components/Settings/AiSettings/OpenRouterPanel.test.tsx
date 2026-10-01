@@ -26,8 +26,10 @@ vi.mock('./UsageSummary', () => ({
 }));
 
 // 'macos' makes the shared Select render a native <select>.
+const listOpenAiCompatibleModels = vi.fn();
 vi.mock('@/lib/api', () => ({
   currentPlatform: () => 'macos',
+  listOpenAiCompatibleModels: (...args: unknown[]) => listOpenAiCompatibleModels(...args),
 }));
 
 const baseConfig: AiConfigState = {
@@ -216,12 +218,72 @@ describe('OpenRouterPanel', () => {
     });
 
     it("marks the key optional and shows the server key state, not OpenRouter's", () => {
-      render(serverConfig);
+      render({ ...serverConfig, hasApiKey: false });
       expect(container.textContent).toContain('settings:openAiCompatible.apiKeyOptional');
-      // OpenRouter's key is saved, the server's is not: no "saved" badge here.
       expect(container.textContent).not.toContain('settings:ai.apiKeySaved');
-      render({ ...serverConfig, hasBaseUrlApiKey: true });
+      render({ ...serverConfig, hasApiKey: false, hasBaseUrlApiKey: true });
       expect(container.textContent).toContain('settings:ai.apiKeySaved');
+    });
+
+    it('has its own OpenRouter key field, apart from the server key', () => {
+      const setApiKey = vi.fn();
+      const setOpenRouterApiKey = vi.fn();
+      act(() => {
+        root.render(
+          <OpenRouterPanel
+            config={{ ...serverConfig, hasApiKey: false }}
+            setConfig={vi.fn()}
+            apiKey=""
+            setApiKey={setApiKey}
+            openRouterApiKey=""
+            setOpenRouterApiKey={setOpenRouterApiKey}
+            contextBudget={32768}
+            onContextBudgetChange={vi.fn()}
+            embeddingModels={[]}
+            embeddingNeedsCheck={false}
+          />,
+        );
+      });
+      const field = container.querySelector<HTMLInputElement>('#ai-openrouter-key');
+      expect(field).not.toBeNull();
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(field, 'sk-or-123');
+        field?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(setOpenRouterApiKey).toHaveBeenCalledWith('sk-or-123');
+      expect(setApiKey).not.toHaveBeenCalled();
+    });
+
+    it('lists the server models when the chat model field is focused', async () => {
+      listOpenAiCompatibleModels.mockResolvedValue(['claude-haiku', 'claude-sonnet']);
+      const setConfig = render({ ...serverConfig, model: '' });
+      const input = container.querySelector<HTMLInputElement>('#ai-chat-model');
+      await act(async () => {
+        input?.focus();
+        input?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      });
+      expect(listOpenAiCompatibleModels).toHaveBeenCalledWith(serverConfig.baseUrl, null);
+      const options = Array.from(container.querySelectorAll('#ai-chat-model-list button')).map((o) => o.textContent);
+      expect(options).toEqual(['claude-haiku', 'claude-sonnet']);
+      act(() => {
+        container
+          .querySelector('#ai-chat-model-list button')
+          ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      });
+      expect(setConfig).toHaveBeenCalledWith({ ...serverConfig, model: 'claude-haiku' });
+    });
+
+    it('lets a model id be typed when the server list cannot load', async () => {
+      listOpenAiCompatibleModels.mockRejectedValue('offline');
+      render({ ...serverConfig, model: '' });
+      const input = container.querySelector<HTMLInputElement>('#ai-chat-model');
+      await act(async () => {
+        input?.focus();
+        input?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      });
+      expect(container.textContent).toContain('settings:openAiCompatible.modelListFailed');
+      expect(container.querySelector('#ai-chat-model-list button')).toBeNull();
     });
 
     it('hides what only OpenRouter has, keeps the context budget, and states where mail goes', () => {
